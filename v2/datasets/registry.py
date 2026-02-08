@@ -4,8 +4,18 @@ registry.py - 数据集注册表
 支持通过配置字符串动态加载数据集。
 """
 
+# 支持单独运行调试：将项目根目录添加到路径
+import sys
+from pathlib import Path
+
+if __name__ == "__main__":
+    current_file = Path(__file__).resolve()
+    v2_dir = current_file.parent.parent
+    if str(v2_dir) not in sys.path:
+        sys.path.insert(0, str(v2_dir))
+
 from typing import Type, Dict
-from .base import BaseDataset
+from datasets.base import BaseDataset
 
 # 数据集注册表
 DATASET_REGISTRY: Dict[str, Type[BaseDataset]] = {}

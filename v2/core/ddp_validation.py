@@ -5,15 +5,24 @@ ddp_validation.py - DDP 验证模块
 独立于训练流程，可单独运行验证。
 """
 
+# 支持单独运行调试：将项目根目录添加到路径
+import sys
+from pathlib import Path
+
+if __name__ == "__main__":
+    current_file = Path(__file__).resolve()
+    v2_dir = current_file.parent.parent
+    if str(v2_dir) not in sys.path:
+        sys.path.insert(0, str(v2_dir))
+
 import torch
 import torch.nn as nn
 import tempfile
 import os
-from pathlib import Path
 from typing import List, Tuple, Callable
 
-from .device_ops import get_raw_model, is_main_process, all_reduce_tensor
-from .checkpoint_ops import (
+from core.device_ops import get_raw_model, is_main_process, all_reduce_tensor
+from core.checkpoint_ops import (
     save_checkpoint_v2, load_checkpoint_v2,
     restore_model_v2, restore_optimizer_v2
 )

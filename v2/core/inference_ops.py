@@ -4,6 +4,16 @@ inference_ops.py - 推理流程封装
 提供标准化的推理流程，支持DDP模式。
 """
 
+# 支持单独运行调试：将项目根目录添加到路径
+import sys
+from pathlib import Path
+
+if __name__ == "__main__":
+    current_file = Path(__file__).resolve()
+    v2_dir = current_file.parent.parent
+    if str(v2_dir) not in sys.path:
+        sys.path.insert(0, str(v2_dir))
+
 import torch
 from typing import Optional, Iterator, Dict, Any
 from dataclasses import dataclass

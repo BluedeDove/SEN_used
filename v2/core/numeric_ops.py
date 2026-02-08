@@ -10,6 +10,16 @@ numeric_ops.py - 数值范围转换的基础函数
     保存图像 -> uint8 [0, 255]
 """
 
+# 支持单独运行调试：将项目根目录添加到路径
+import sys
+from pathlib import Path
+
+if __name__ == "__main__":
+    current_file = Path(__file__).resolve()
+    v2_dir = current_file.parent.parent
+    if str(v2_dir) not in sys.path:
+        sys.path.insert(0, str(v2_dir))
+
 import torch
 import numpy as np
 from typing import Tuple, Union, Optional

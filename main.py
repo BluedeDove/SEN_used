@@ -31,6 +31,10 @@ from commands.train import TrainCommand
 from commands.infer import InferCommand
 from commands.debug import DebugCommand
 
+# 导入模型注册表并触发模型注册
+from models.registry import import_models
+import_models()
+
 
 def main():
     """主函数"""

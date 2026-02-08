@@ -4,11 +4,20 @@ checkpoint_ops.py - 检查点保存和加载
 统一的检查点管理接口，支持DDP和非DDP模式。
 """
 
+# 支持单独运行调试：将项目根目录添加到路径
+import sys
+
+if __name__ == "__main__":
+    current_file = Path(__file__).resolve()
+    v2_dir = current_file.parent.parent
+    if str(v2_dir) not in sys.path:
+        sys.path.insert(0, str(v2_dir))
+
 import os
 import torch
 from pathlib import Path
 from typing import Dict, Any, Optional
-from .device_ops import get_raw_model, is_main_process
+from core.device_ops import get_raw_model, is_main_process
 
 
 def save_checkpoint_v2(

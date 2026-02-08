@@ -4,6 +4,16 @@ training_ops.py - 训练流程封装
 提供标准化的训练流程，支持DDP、混合精度、梯度累积等。
 """
 
+# 支持单独运行调试：将项目根目录添加到路径
+import sys
+from pathlib import Path
+
+if __name__ == "__main__":
+    current_file = Path(__file__).resolve()
+    v2_dir = current_file.parent.parent
+    if str(v2_dir) not in sys.path:
+        sys.path.insert(0, str(v2_dir))
+
 import torch
 import torch.nn.functional as F
 from typing import Optional, Dict, Any, Tuple
@@ -12,6 +22,7 @@ from models.registry import create_model
 from datasets.registry import create_dataset
 from core.device_ops import is_main_process, all_reduce_tensor, get_raw_model
 from core.checkpoint_ops import save_checkpoint_v2
+from core.amp_ops import AMPManager, create_amp_manager
 
 
 class TrainingContext:
@@ -22,7 +33,7 @@ class TrainingContext:
         model,
         optimizer,
         scheduler,
-        scaler,
+        amp_manager: AMPManager,
         train_loader,
         val_loader,
         device,
@@ -32,7 +43,7 @@ class TrainingContext:
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.scaler = scaler
+        self.amp_manager = amp_manager
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
@@ -155,15 +166,14 @@ def setup_training(
     else:
         scheduler = None
 
-    # 创建梯度缩放器（混合精度）
-    use_amp = train_cfg.get('mixed_precision', {}).get('enabled', False)
-    scaler = torch.cuda.amp.GradScaler() if use_amp else None
+    # 创建 AMP 管理器（混合精度）
+    amp_manager = create_amp_manager(config)
 
     return TrainingContext(
         model=model_interface,
         optimizer=optimizer,
         scheduler=scheduler,
-        scaler=scaler,
+        amp_manager=amp_manager,
         train_loader=train_loader,
         val_loader=val_loader,
         device=device,
@@ -176,9 +186,8 @@ def train_step(
     model,
     batch: Dict[str, torch.Tensor],
     optimizer,
-    scaler,
+    amp_manager: AMPManager,
     device: torch.device,
-    use_amp: bool,
     max_norm: float = 0.0
 ) -> Tuple[float, Dict[str, float]]:
     """
@@ -188,9 +197,8 @@ def train_step(
         model: 模型接口
         batch: 数据批次
         optimizer: 优化器
-        scaler: 梯度缩放器
+        amp_manager: AMP 管理器
         device: 设备
-        use_amp: 是否使用混合精度
         max_norm: 梯度裁剪最大范数
 
     Returns:
@@ -202,23 +210,25 @@ def train_step(
 
     # 前向传播
     optimizer.zero_grad()
+    use_amp = amp_manager.is_enabled()
 
-    if use_amp and scaler is not None:
+    if use_amp:
         # 混合精度训练
-        with torch.cuda.amp.autocast():
+        with amp_manager.autocast():
             loss, loss_dict = model(sar, optical, return_dict=True)
 
-        # 反向传播
-        scaler.scale(loss).backward()
+        # 反向传播 (使用 AMP 缩放)
+        scaled_loss = amp_manager.scale(loss)
+        scaled_loss.backward()
 
         # 梯度裁剪
         if max_norm > 0:
-            scaler.unscale_(optimizer)
+            amp_manager.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model._model.parameters(), max_norm)
 
         # 更新参数
-        scaler.step(optimizer)
-        scaler.update()
+        amp_manager.step(optimizer)
+        amp_manager.update()
     else:
         # 正常训练
         loss, loss_dict = model(sar, optical, return_dict=True)
@@ -240,9 +250,8 @@ def train_step_with_accumulation(
     model,
     batch: Dict[str, torch.Tensor],
     optimizer,
-    scaler,
+    amp_manager: AMPManager,
     device: torch.device,
-    use_amp: bool,
     max_norm: float,
     accumulation_steps: int,
     is_accumulation_step: bool
@@ -254,9 +263,8 @@ def train_step_with_accumulation(
         model: 模型接口
         batch: 数据批次
         optimizer: 优化器
-        scaler: 梯度缩放器
+        amp_manager: AMP 管理器
         device: 设备
-        use_amp: 是否使用混合精度
         max_norm: 梯度裁剪最大范数
         accumulation_steps: 累积步数
         is_accumulation_step: 是否是累积步（非更新步）
@@ -268,14 +276,17 @@ def train_step_with_accumulation(
     sar = batch['sar'].to(device)
     optical = batch['optical'].to(device)
 
+    use_amp = amp_manager.is_enabled()
+
     # 前向传播
-    if use_amp and scaler is not None:
-        with torch.cuda.amp.autocast():
+    if use_amp:
+        with amp_manager.autocast():
             loss, loss_dict = model(sar, optical, return_dict=True)
             loss = loss / accumulation_steps
 
-        # 反向传播
-        scaler.scale(loss).backward()
+        # 反向传播 (使用 AMP 缩放)
+        scaled_loss = amp_manager.scale(loss)
+        scaled_loss.backward()
     else:
         loss, loss_dict = model(sar, optical, return_dict=True)
         loss = loss / accumulation_steps
@@ -285,16 +296,12 @@ def train_step_with_accumulation(
     if not is_accumulation_step:
         # 梯度裁剪
         if max_norm > 0:
-            if use_amp and scaler is not None:
-                scaler.unscale_(optimizer)
+            amp_manager.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model._model.parameters(), max_norm)
 
         # 更新参数
-        if use_amp and scaler is not None:
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            optimizer.step()
+        amp_manager.step(optimizer)
+        amp_manager.update()
 
         optimizer.zero_grad()
 

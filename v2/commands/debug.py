@@ -4,10 +4,19 @@ debug.py - 调试命令
 实现DEBUG模式，强制进行数值检验，确保数据流正确性。
 """
 
+# 支持单独运行调试：将项目根目录添加到路径
+import sys
+from pathlib import Path
+
+if __name__ == "__main__":
+    current_file = Path(__file__).resolve()
+    v2_dir = current_file.parent.parent
+    if str(v2_dir) not in sys.path:
+        sys.path.insert(0, str(v2_dir))
+
 import argparse
 import yaml
 import torch
-from pathlib import Path
 from commands.base import BaseCommand, command
 from core.device_ops import setup_device_and_distributed, is_main_process
 from core.numeric_ops import validate_range, model_output_to_composite, composite_to_uint8
@@ -181,16 +190,18 @@ class DebugCommand(BaseCommand):
         expected_range = model_interface.get_output_range()
         print(f"Expected model output range: {expected_range}")
 
-        # 创建测试输入
-        test_sar = torch.rand(2, 1, 128, 128).to(device)
+        # ========== 测试1: 推理模式 (get_output) ==========
+        print("\n  [Test 1] Inference mode (get_output)")
+        # 创建测试输入 - 3通道SAR (根据SEN12数据集)
+        test_sar = torch.rand(2, 3, 128, 128).to(device)
 
         with torch.no_grad():
             output = model_interface.get_output(test_sar, config)
             residual = output.generated
 
         if verbose:
-            print(f"  Model output shape: {list(residual.shape)}")
-            print(f"  Model output range: [{residual.min():.4f}, {residual.max():.4f}]")
+            print(f"    Model output shape: {list(residual.shape)}")
+            print(f"    Model output range: [{residual.min():.4f}, {residual.max():.4f}]")
 
         # 验证范围
         validate_range(residual, expected_range, "Model output (residual)")
@@ -199,13 +210,37 @@ class DebugCommand(BaseCommand):
         if 'sar_base' in output.intermediate:
             sar_base = output.intermediate['sar_base']
             if verbose:
-                print(f"  SAR base range: [{sar_base.min():.4f}, {sar_base.max():.4f}]")
+                print(f"    SAR base range: [{sar_base.min():.4f}, {sar_base.max():.4f}]")
             validate_range(sar_base, (0.0, 1.0), "SAR base")
+
+        # ========== 测试2: 训练模式前向传播 ==========
+        print("\n  [Test 2] Training mode forward pass")
+        model_interface.train()
+
+        # 创建训练输入
+        train_sar = torch.rand(2, 3, 256, 256).to(device)
+        train_optical = torch.rand(2, 3, 256, 256).to(device)
+
+        try:
+            loss, loss_dict = model_interface(train_sar, train_optical, return_dict=True)
+            print(f"    Training forward pass: OK")
+            print(f"    Loss: {loss.item():.4f}")
+            if verbose and loss_dict:
+                for k, v in loss_dict.items():
+                    if isinstance(v, torch.Tensor):
+                        print(f"      {k}: {v.item():.4f}")
+                    else:
+                        print(f"      {k}: {v}")
+        except Exception as e:
+            print(f"    [FAIL] Training forward pass failed: {e}")
+            raise
+
+        print("\n  [OK] Model tests passed")
 
     def _test_composite_flow(self, config: dict, device: torch.device, verbose: bool):
         """测试合成流程"""
-        # 创建测试数据
-        sar = torch.rand(2, 1, 128, 128).to(device)
+        # 创建测试数据 - 3通道SAR (SEN12格式)
+        sar = torch.rand(2, 3, 128, 128).to(device)
 
         # 创建模型
         model_interface = create_model(config, device=device)

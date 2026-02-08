@@ -5,14 +5,14 @@
 # ==================== 数据配置 ====================
 data:
   # 数据集类型选择: "whu" 或 "sen12"
-  type: "whu"
+  type: "sen12"
 
   # WHU 数据集配置 (当 type="whu" 时使用)
-  train_dir: "data/train"
-  test_dir: "data/test"
+  #train_dir: "data/train"
+  #test_dir: "data/test"
 
   # SEN1-2 数据集配置 (当 type="sen12" 时使用)
-  # root: "G:/Data/SEN1-2"
+  root: "/root/SEN1-2"
 
   train_ratio: 0.9
   test_ratio: 0.1
@@ -27,16 +27,16 @@ data:
   # SEN12: sar=3通道, optical=3通道
   channels:
     optical:
-      input: 4          # 输入通道数 (TIFF文件实际通道)
-      use: 3            # 使用的通道数 (取前N个通道)
-      indices: [0,1,2]  # 具体使用的通道索引
+      input: 3          # SEN12光学图像输入通道
+      use: 3            # 使用3通道
+      indices: [0,1,2]  # RGB通道
     sar:
-      input: 1
-      use: 1
-      indices: [0]
+      input: 3          # SEN12 SAR图像输入通道(实际是3通道VV,VH组合)
+      use: 3
+      indices: [0,1,2]
 
   dataloader:
-    batch_size: 4           # 根据显存调整
+    batch_size: 28           # 根据显存调整
     num_workers: 4          # 数据加载worker数
     pin_memory: true        # 锁页内存
     prefetch_factor: 2      # 预取因子
@@ -47,6 +47,16 @@ model:
   type: "srdm"           # 模型类型
   name: "SRDM"
   output_range: [-1.0, 1.0]  # 模型输出范围 (SRDM预测残差)
+
+# ==================== 混合精度配置 ====================
+amp:
+  enabled: true           # 是否启用自动混合精度 (AMP)
+  use_bf16: false         # 是否使用 BF16 (需要 A100/A800 等 Ampere 架构)
+                         # FP16 (false) - 通用，但可能需要梯度缩放
+                         # BF16 (true)  - A100/A800 推荐，更稳定，无需梯度缩放
+  init_scale: 65536.0     # FP16 梯度初始缩放因子 (2^16)
+  growth_interval: 2000   # 梯度缩放增长间隔
+
 
 # SRDM专用配置
 srdm:

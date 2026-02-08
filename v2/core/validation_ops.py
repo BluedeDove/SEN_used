@@ -4,6 +4,16 @@ validation_ops.py - 验证流程封装
 提供标准化的验证流程，支持指标计算和结果保存。
 """
 
+# 支持单独运行调试：将项目根目录添加到路径
+import sys
+from pathlib import Path
+
+if __name__ == "__main__":
+    current_file = Path(__file__).resolve()
+    v2_dir = current_file.parent.parent
+    if str(v2_dir) not in sys.path:
+        sys.path.insert(0, str(v2_dir))
+
 import torch
 import numpy as np
 from typing import Dict, Optional, Tuple
@@ -42,7 +52,7 @@ def compute_ssim(img1: torch.Tensor, img2: torch.Tensor, window_size: int = 11) 
     Returns:
         SSIM值
     """
-    from ..models.srdm.losses import SSIMLoss
+    from models.srdm.losses import SSIMLoss
 
     ssim_loss = SSIMLoss(window_size=window_size)
     ssim_val = ssim_loss(img1, img2)
