@@ -94,12 +94,12 @@ def import_datasets():
     """
     # 延迟导入以避免循环依赖
     try:
-        from .sar_optical_dataset import WHUDataset
+        from .whu.dataset import WHUDataset
     except ImportError:
         pass
 
     try:
-        from .sen12_dataset import SEN12Dataset
+        from .sen12.dataset import SEN12Dataset
     except ImportError:
         pass
 
