@@ -2,6 +2,11 @@
 debug.py - 调试命令
 
 实现DEBUG模式，强制进行数值检验，确保数据流正确性。
+
+设计原则：
+- 通用调试逻辑在此文件中实现
+- 模型特有调试逻辑在各自模型的 debug.py 中实现
+- 通过 model.debug() 接口调用模型特有测试
 """
 
 # 支持单独运行调试：将项目根目录添加到路径
@@ -19,7 +24,7 @@ import yaml
 import torch
 from commands.base import BaseCommand, command
 from core.device_ops import setup_device_and_distributed, is_main_process
-from core.numeric_ops import validate_range, model_output_to_composite, composite_to_uint8
+from core.numeric_ops import validate_range, composite_to_uint8
 from core.ddp_validation import run_all_validations
 from datasets.registry import create_dataset
 from models.registry import create_model
@@ -33,7 +38,7 @@ class DebugCommand(BaseCommand):
     DEBUG模式强制进行数值检验，验证以下内容：
     1. 数据集输出范围
     2. 模型输出范围
-    3. 合成流程
+    3. 模型特有逻辑（通过model.debug()）
     4. 数值转换一致性
     """
 
@@ -53,7 +58,7 @@ class DebugCommand(BaseCommand):
     def execute(self, args: argparse.Namespace):
         """执行调试"""
         print("=" * 70)
-        print("SRDM DEBUG MODE")
+        print("DEBUG MODE")
         print("=" * 70)
         print("This mode performs strict numerical validation to ensure")
         print("that the data flow is correct before training.")
@@ -61,35 +66,12 @@ class DebugCommand(BaseCommand):
 
         # 如果只测试DDP，可以跳过配置加载
         if args.test_ddp and not (args.test_dataset or args.test_model):
-            print("\n[TEST 0] DDP Code Validation")
-            print("-" * 70)
-            print("Note: Testing DDP logic with MockDDP (no multi-GPU required)")
-            from core.ddp_validation import run_all_validations
-            ddp_passed, ddp_messages = run_all_validations(verbose=args.verbose)
-            for msg in ddp_messages:
-                status_symbol = "[OK]" if "PASSED" in msg else "[FAIL]"
-                print(f"  {status_symbol} {msg}")
-            if ddp_passed:
-                print("[OK] DDP code test PASSED")
-                return 0
-            else:
-                print("[FAIL] DDP code test FAILED")
-                return 1
+            return self._run_ddp_test(args.verbose)
 
         # 加载配置
-        config_path = args.config
-        if not Path(config_path).exists():
-            # 尝试不同路径
-            alt_path = Path(__file__).parent.parent / config_path
-            if alt_path.exists():
-                config_path = str(alt_path)
-
-        if not Path(config_path).exists():
-            print(f"Error: Config file not found: {args.config}")
+        config = self._load_config(args.config)
+        if config is None:
             return 1
-
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
 
         # 设置设备
         device, rank, world_size = setup_device_and_distributed(config)
@@ -98,51 +80,23 @@ class DebugCommand(BaseCommand):
 
         # 测试 DDP 代码逻辑（与 config 相关时）
         if args.test_ddp:
-            print("\n[TEST 0] DDP Code Validation")
-            print("-" * 70)
-            print("Note: Testing DDP logic with MockDDP (no multi-GPU required)")
-            ddp_passed, ddp_messages = run_all_validations(verbose=args.verbose)
-            for msg in ddp_messages:
-                status_symbol = "[OK]" if "PASSED" in msg else "[FAIL]"
-                print(f"  {status_symbol} {msg}")
-            if ddp_passed:
-                print("[OK] DDP code test PASSED")
-            else:
-                print("[FAIL] DDP code test FAILED")
-                all_tests_passed = False
+            ddp_passed = self._run_ddp_test(args.verbose)
+            all_tests_passed = all_tests_passed and ddp_passed
 
         # 测试1: 数据集数值范围
         if not args.test_model and not args.test_ddp:
-            print("\n[TEST 1] Dataset Numerical Range Validation")
-            print("-" * 70)
-            try:
-                self._test_dataset(config, device, args.verbose)
-                print("[OK] Dataset test PASSED")
-            except Exception as e:
-                print(f"[FAIL] Dataset test FAILED: {e}")
-                all_tests_passed = False
+            dataset_passed = self._run_dataset_test(config, device, args.verbose)
+            all_tests_passed = all_tests_passed and dataset_passed
 
-        # 测试2: 模型输出范围
+        # 测试2: 模型特有测试（通过通用接口调用）
         if not args.test_dataset and not args.test_ddp:
-            print("\n[TEST 2] Model Output Range Validation")
-            print("-" * 70)
-            try:
-                self._test_model_output(config, device, args.verbose)
-                print("[OK] Model output test PASSED")
-            except Exception as e:
-                print(f"[FAIL] Model output test FAILED: {e}")
-                all_tests_passed = False
+            model_passed = self._run_model_test(config, device, args.verbose)
+            all_tests_passed = all_tests_passed and model_passed
 
-        # 测试3: 合成流程
+        # 测试3: 数值转换一致性
         if not args.test_dataset and not args.test_ddp:
-            print("\n[TEST 3] Composite Flow Validation")
-            print("-" * 70)
-            try:
-                self._test_composite_flow(config, device, args.verbose)
-                print("[OK] Composite flow test PASSED")
-            except Exception as e:
-                print(f"[FAIL] Composite flow test FAILED: {e}")
-                all_tests_passed = False
+            numeric_passed = self._run_numeric_test(config, device, args.verbose)
+            all_tests_passed = all_tests_passed and numeric_passed
 
         # 总结
         print("\n" + "=" * 70)
@@ -154,130 +108,179 @@ class DebugCommand(BaseCommand):
 
         return 0 if all_tests_passed else 1
 
-    def _test_dataset(self, config: dict, device: torch.device, verbose: bool):
-        """测试数据集"""
-        # 创建数据集
-        dataset = create_dataset(config, split='train')
+    def _load_config(self, config_path: str):
+        """加载配置文件"""
+        if not Path(config_path).exists():
+            # 尝试不同路径
+            alt_path = Path(__file__).parent.parent / config_path
+            if alt_path.exists():
+                config_path = str(alt_path)
 
-        # 验证数据范围
-        expected_range = dataset.get_data_range()
-        print(f"Expected data range: {expected_range}")
+        if not Path(config_path).exists():
+            print(f"Error: Config file not found: {config_path}")
+            return None
 
-        # 测试多个样本
-        for i in range(min(5, len(dataset))):
-            sample = dataset[i]
-            sar = sample['sar']
-            optical = sample['optical']
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
 
-            if verbose:
-                print(f"  Sample {i}:")
-                print(f"    SAR: shape={list(sar.shape)}, range=[{sar.min():.4f}, {sar.max():.4f}]")
-                print(f"    Optical: shape={list(optical.shape)}, range=[{optical.min():.4f}, {optical.max():.4f}]")
+    def _run_ddp_test(self, verbose: bool) -> bool:
+        """运行DDP代码测试"""
+        print("\n[TEST] DDP Code Validation")
+        print("-" * 70)
+        print("Note: Testing DDP logic with MockDDP (no multi-GPU required)")
 
-            # 验证范围
-            validate_range(sar, expected_range, f"SAR sample {i}")
-            validate_range(optical, expected_range, f"Optical sample {i}")
+        ddp_passed, ddp_messages = run_all_validations(verbose=verbose)
+        for msg in ddp_messages:
+            status_symbol = "[OK]" if "PASSED" in msg else "[FAIL]"
+            print(f"  {status_symbol} {msg}")
 
-        print(f"  Validated {min(5, len(dataset))} samples")
+        if ddp_passed:
+            print("[OK] DDP code test PASSED")
+        else:
+            print("[FAIL] DDP code test FAILED")
 
-    def _test_model_output(self, config: dict, device: torch.device, verbose: bool):
-        """测试模型输出"""
-        # 创建模型
-        model_interface = create_model(config, device=device)
-        model_interface.eval()
+        return ddp_passed
 
-        # 获取预期输出范围
-        expected_range = model_interface.get_output_range()
-        print(f"Expected model output range: {expected_range}")
-
-        # ========== 测试1: 推理模式 (get_output) ==========
-        print("\n  [Test 1] Inference mode (get_output)")
-        # 创建测试输入 - 3通道SAR (根据SEN12数据集)
-        test_sar = torch.rand(2, 3, 128, 128).to(device)
-
-        with torch.no_grad():
-            output = model_interface.get_output(test_sar, config)
-            residual = output.generated
-
-        if verbose:
-            print(f"    Model output shape: {list(residual.shape)}")
-            print(f"    Model output range: [{residual.min():.4f}, {residual.max():.4f}]")
-
-        # 验证范围
-        validate_range(residual, expected_range, "Model output (residual)")
-
-        # 验证中间结果
-        if 'sar_base' in output.intermediate:
-            sar_base = output.intermediate['sar_base']
-            if verbose:
-                print(f"    SAR base range: [{sar_base.min():.4f}, {sar_base.max():.4f}]")
-            validate_range(sar_base, (0.0, 1.0), "SAR base")
-
-        # ========== 测试2: 训练模式前向传播 ==========
-        print("\n  [Test 2] Training mode forward pass")
-        model_interface.train()
-
-        # 创建训练输入
-        train_sar = torch.rand(2, 3, 256, 256).to(device)
-        train_optical = torch.rand(2, 3, 256, 256).to(device)
+    def _run_dataset_test(self, config: dict, device: torch.device, verbose: bool) -> bool:
+        """运行数据集测试"""
+        print("\n[TEST] Dataset Numerical Range Validation")
+        print("-" * 70)
 
         try:
-            loss, loss_dict = model_interface(train_sar, train_optical, return_dict=True)
-            print(f"    Training forward pass: OK")
-            print(f"    Loss: {loss.item():.4f}")
-            if verbose and loss_dict:
-                for k, v in loss_dict.items():
-                    if isinstance(v, torch.Tensor):
-                        print(f"      {k}: {v.item():.4f}")
-                    else:
-                        print(f"      {k}: {v}")
+            # 创建数据集
+            dataset = create_dataset(config, split='train')
+
+            # 验证数据范围
+            expected_range = dataset.get_data_range()
+            print(f"Expected data range: {expected_range}")
+
+            # 测试多个样本
+            for i in range(min(5, len(dataset))):
+                sample = dataset[i]
+                sar = sample['sar']
+                optical = sample['optical']
+
+                if verbose:
+                    print(f"  Sample {i}:")
+                    print(f"    SAR: shape={list(sar.shape)}, range=[{sar.min():.4f}, {sar.max():.4f}]")
+                    print(f"    Optical: shape={list(optical.shape)}, range=[{optical.min():.4f}, {optical.max():.4f}]")
+
+                # 验证范围
+                validate_range(sar, expected_range, f"SAR sample {i}")
+                validate_range(optical, expected_range, f"Optical sample {i}")
+
+            print(f"[OK] Dataset test PASSED (validated {min(5, len(dataset))} samples)")
+            return True
         except Exception as e:
-            print(f"    [FAIL] Training forward pass failed: {e}")
+            print(f"[FAIL] Dataset test FAILED: {e}")
+            return False
+
+    def _run_model_test(self, config: dict, device: torch.device, verbose: bool) -> bool:
+        """
+        运行模型特有测试
+
+        通过 model.debug() 接口调用模型特有的调试逻辑。
+        这使得每个模型可以实现自己的测试，而不需要修改此文件。
+        """
+        print("\n[TEST] Model-Specific Validation")
+        print("-" * 70)
+
+        try:
+            # 创建模型
+            model_interface = create_model(config, device=str(device))
+
+            # 调用模型的debug方法（通用接口）
+            report = model_interface.debug(device, verbose=verbose)
+
+            # 打印报告
+            print(f"Model: {report.model_name}")
+            for test in report.tests:
+                status_symbol = "[OK]" if test.status == "OK" else ("[WARN]" if test.status == "WARN" else "[FAIL]")
+                print(f"  {status_symbol} {test.component_name}: {test.message}")
+
+            # 打印摘要
+            print(f"\nSummary: {report.summary}")
+
+            # 根据整体状态返回结果
+            if report.overall_status == "PASSED":
+                print("[OK] Model test PASSED")
+                return True
+            elif report.overall_status == "WARNING":
+                print("[WARN] Model test completed with warnings")
+                return True
+            else:
+                print("[FAIL] Model test FAILED")
+                return False
+
+        except AttributeError as e:
+            # 如果模型没有实现debug方法，回退到基本测试
+            if "'debug'" in str(e):
+                print(f"Model does not implement debug() method, running basic tests...")
+                return self._run_basic_model_test(config, device, verbose)
             raise
+        except Exception as e:
+            print(f"[FAIL] Model test FAILED: {e}")
+            return False
 
-        print("\n  [OK] Model tests passed")
+    def _run_basic_model_test(self, config: dict, device: torch.device, verbose: bool) -> bool:
+        """
+        基本模型测试（当模型没有实现debug方法时的回退方案）
+        """
+        try:
+            model_interface = create_model(config, device=str(device))
+            model_interface.eval()
 
-    def _test_composite_flow(self, config: dict, device: torch.device, verbose: bool):
-        """测试合成流程"""
-        # 创建测试数据 - 3通道SAR (SEN12格式)
-        sar = torch.rand(2, 3, 128, 128).to(device)
+            # 基本推理测试
+            test_sar = torch.rand(2, 1, 128, 128).to(device)
+            with torch.no_grad():
+                output = model_interface.get_output(test_sar, config)
 
-        # 创建模型
-        model_interface = create_model(config, device=device)
-        model_interface.eval()
+            print(f"  Model output shape: {list(output.generated.shape)}")
+            print(f"  Model output range: [{output.generated.min():.4f}, {output.generated.max():.4f}]")
 
-        # 获取模型输出
-        with torch.no_grad():
-            output = model_interface.get_output(sar, config)
-            residual = output.generated
-            sar_base = output.intermediate['sar_base']
+            print("[OK] Basic model test PASSED")
+            return True
+        except Exception as e:
+            print(f"[FAIL] Basic model test FAILED: {e}")
+            return False
 
-        # 合成
-        composite = model_output_to_composite(
-            model_output=residual,
-            base=sar_base,
-            output_range=(0.0, 1.0),
-            clamp_negative=True,
-            normalize=True
-        )
+    def _run_numeric_test(self, config: dict, device: torch.device, verbose: bool) -> bool:
+        """运行数值转换测试"""
+        print("\n[TEST] Numeric Conversion Validation")
+        print("-" * 70)
 
-        if verbose:
-            print(f"  Residual range: [{residual.min():.4f}, {residual.max():.4f}]")
-            print(f"  SAR base range: [{sar_base.min():.4f}, {sar_base.max():.4f}]")
-            print(f"  Composite range: [{composite.min():.4f}, {composite.max():.4f}]")
+        try:
+            # 创建模型
+            model_interface = create_model(config, device=str(device))
+            model_interface.eval()
 
-        # 验证合成结果范围
-        validate_range(composite, (0.0, 1.0), "Composite output")
+            # 创建测试输入
+            sar = torch.rand(2, 1, 128, 128).to(device)
 
-        # 测试转换为uint8
-        uint8_img = composite_to_uint8(composite, input_range=(0.0, 1.0))
-        assert uint8_img.dtype == 'uint8', "uint8 conversion failed"
-        assert uint8_img.max() <= 255, "uint8 max exceeded"
-        assert uint8_img.min() >= 0, "uint8 min exceeded"
+            # 获取模型输出
+            with torch.no_grad():
+                output = model_interface.get_output(sar, config)
+                generated = output.generated
 
-        if verbose:
-            print(f"  uint8 image shape: {uint8_img.shape}, dtype: {uint8_img.dtype}")
-            print(f"  uint8 range: [{uint8_img.min()}, {uint8_img.max()}]")
+            # 验证输出范围
+            validate_range(generated, (0.0, 1.0), "Model output")
+
+            # 测试uint8转换
+            uint8_img = composite_to_uint8(generated, input_range=(0.0, 1.0))
+            assert uint8_img.dtype == 'uint8', "uint8 conversion failed"
+            assert uint8_img.max() <= 255, "uint8 max exceeded"
+            assert uint8_img.min() >= 0, "uint8 min exceeded"
+
+            if verbose:
+                print(f"  Generated range: [{generated.min():.4f}, {generated.max():.4f}]")
+                print(f"  uint8 image shape: {uint8_img.shape}")
+                print(f"  uint8 range: [{uint8_img.min()}, {uint8_img.max()}]")
+
+            print("[OK] Numeric conversion test PASSED")
+            return True
+        except Exception as e:
+            print(f"[FAIL] Numeric conversion test FAILED: {e}")
+            return False
 
 
 if __name__ == "__main__":

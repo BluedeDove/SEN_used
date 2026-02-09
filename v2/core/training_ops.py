@@ -311,46 +311,6 @@ def train_step_with_accumulation(
     return loss.item() * accumulation_steps, loss_dict
 
 
-def validate_model(
-    model,
-    val_loader: DataLoader,
-    device: torch.device,
-    max_batches: Optional[int] = None
-) -> Dict[str, float]:
-    """
-    验证模型
-
-    Args:
-        model: 模型接口
-        val_loader: 验证数据加载器
-        device: 设备
-        max_batches: 最大验证批次
-
-    Returns:
-        指标字典
-    """
-    model.eval()
-
-    total_loss = 0.0
-    num_batches = 0
-
-    with torch.no_grad():
-        for i, batch in enumerate(val_loader):
-            if max_batches is not None and i >= max_batches:
-                break
-
-            sar = batch['sar'].to(device)
-            optical = batch['optical'].to(device)
-
-            loss, _ = model(sar, optical, return_dict=True)
-            total_loss += loss.item()
-            num_batches += 1
-
-    avg_loss = total_loss / max(num_batches, 1)
-
-    return {'val_loss': avg_loss}
-
-
 if __name__ == "__main__":
     # 测试
     print("Testing training_ops.py...")

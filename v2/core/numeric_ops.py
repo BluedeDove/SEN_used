@@ -157,16 +157,20 @@ def model_output_to_composite(
     """
     将模型输出与base合成为最终图像
 
-    SRDM示例:
-        model_output = residual [-1, 1]
-        base = sar_base [0, 1]
-        composite = sar_base + residual -> 范围[-1, 2]
-        clamp_negative=True -> 截断负数 -> [0, 2]
-        normalize=True -> /2 -> [0, 1]
+    通用示例:
+        model_output: 模型预测的变化量/残差，范围可能为[-1, 1]
+        base: 基础图像（如输入图像），范围通常为[0, 1]
+        composite = base + model_output -> 可能超出有效范围
+        clamp_negative=True -> 截断负数部分
+        normalize=True -> 归一化到目标范围
+
+    适用场景:
+        - 残差学习模型: 输出残差与基础图像相加
+        - 变化量预测: 预测变化量叠加到基础图像
 
     Args:
-        model_output: 模型输出张量
-        base: 基础图像(如sar_base)
+        model_output: 模型输出张量（如残差、变化量）
+        base: 基础图像张量
         output_range: 目标输出范围 (min, max)
         clamp_negative: 是否截断负数
         normalize: 是否归一化到output_range
@@ -256,29 +260,57 @@ def tensor_info(tensor: torch.Tensor, name: str = "tensor") -> str:
 
 
 if __name__ == "__main__":
-    # 测试
-    print("Testing numeric_ops...")
+    """
+    测试数值操作模块
 
-    # 测试 validate_range
+    测试场景1: 残差合成（适用于残差学习模型如SRDM）
+    测试场景2: 直接输出（适用于端到端生成模型如标准DDPM）
+    """
+    print("=" * 60)
+    print("Testing numeric_ops module")
+    print("=" * 60)
+
+    # ========== 测试1: validate_range ==========
+    print("\n[TEST 1] validate_range")
     x = torch.rand(2, 3, 64, 64)
     try:
         validate_range(x, (0.0, 1.0), "test_tensor")
-        print("✓ validate_range passed")
+        print("  [OK] validate_range passed")
     except ValueError as e:
-        print(f"✗ validate_range failed: {e}")
+        print(f"  [FAIL] validate_range failed: {e}")
 
-    # 测试 SRDM 场景
-    residual = torch.rand(2, 3, 64, 64) * 2 - 1  # [-1, 1]
-    sar_base = torch.rand(2, 3, 64, 64)  # [0, 1]
+    # ========== 测试2: 残差合成场景 ==========
+    print("\n[TEST 2] Residual composition (for residual-learning models)")
+    # 场景：模型输出残差，与基础图像相加
+    delta = torch.rand(2, 3, 64, 64) * 2 - 1  # 变化量 [-1, 1]
+    base_image = torch.rand(2, 3, 64, 64)      # 基础图像 [0, 1]
 
-    composite = model_output_to_composite(
-        residual, sar_base, output_range=(0.0, 1.0),
+    composite_residual = model_output_to_composite(
+        delta, base_image, output_range=(0.0, 1.0),
         clamp_negative=True, normalize=True
     )
-    print(f"✓ SRDM composite range: [{composite.min():.4f}, {composite.max():.4f}]")
+    print(f"  [OK] Residual composition: delta [{delta.min():.2f}, {delta.max():.2f}] + base [{base_image.min():.2f}, {base_image.max():.2f}]")
+    print(f"       -> composite [{composite_residual.min():.4f}, {composite_residual.max():.4f}]")
 
-    # 测试 composite_to_uint8
-    uint8_img = composite_to_uint8(composite, input_range=(0.0, 1.0))
-    print(f"✓ uint8 image shape: {uint8_img.shape}, dtype: {uint8_img.dtype}")
+    # ========== 测试3: 端到端生成场景 ==========
+    print("\n[TEST 3] End-to-end generation (for direct generation models)")
+    # 场景：模型直接输出图像，无需合成
+    generated = torch.rand(2, 3, 64, 64) * 0.8 + 0.1  # 生成图像 [0.1, 0.9]
 
-    print("All tests passed!")
+    # 对于这种模型，可以直接使用 clamp_and_normalize
+    normalized = clamp_and_normalize(
+        generated,
+        clamp_min=0.0,
+        clamp_max=1.0,
+        target_range=(0.0, 1.0)
+    )
+    print(f"  [OK] Direct generation: [{generated.min():.2f}, {generated.max():.2f}] -> normalized [{normalized.min():.4f}, {normalized.max():.4f}]")
+
+    # ========== 测试4: composite_to_uint8 ==========
+    print("\n[TEST 4] composite_to_uint8")
+    uint8_img = composite_to_uint8(composite_residual, input_range=(0.0, 1.0))
+    print(f"  [OK] uint8 image: shape={uint8_img.shape}, dtype={uint8_img.dtype}, range=[{uint8_img.min()}, {uint8_img.max()}]")
+
+    print("\n" + "=" * 60)
+    print("All numeric_ops tests passed!")
+    print("=" * 60)

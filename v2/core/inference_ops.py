@@ -19,7 +19,7 @@ from typing import Optional, Iterator, Dict, Any
 from dataclasses import dataclass
 from models.registry import create_model
 from datasets.registry import create_dataset
-from core.numeric_ops import model_output_to_composite, validate_range
+from core.numeric_ops import validate_range
 from core.device_ops import setup_device_and_distributed, is_main_process
 
 
@@ -96,35 +96,18 @@ def run_inference(
             except ValueError as e:
                 print(f"Warning: {e}")
 
-            # 获取模型输出
+            # 获取模型输出（模型内部已完成合成）
             model_output = model_interface.get_output(sar, config)
-            residual = model_output.generated
+            generated = model_output.generated
 
             # 验证模型输出范围
-            expected_range = model_interface.get_output_range()
             try:
-                validate_range(residual, expected_range, "Model output (residual)")
-            except ValueError as e:
-                print(f"Warning: {e}")
-
-            # 合成最终图像
-            sar_base = model_output.intermediate['sar_base']
-            composite = model_output_to_composite(
-                model_output=residual,
-                base=sar_base,
-                output_range=(0.0, 1.0),
-                clamp_negative=True,
-                normalize=True
-            )
-
-            # 验证合成结果范围
-            try:
-                validate_range(composite, (0.0, 1.0), "Composite output")
+                validate_range(generated, (0.0, 1.0), "Model output")
             except ValueError as e:
                 print(f"Warning: {e}")
 
             yield InferenceOutput(
-                generated=composite,
+                generated=generated,
                 sar=sar,
                 optical=optical,
                 metadata={
@@ -163,22 +146,12 @@ def inference_batch(
             if optical is not None:
                 optical = optical.to(device)
 
-            # 批量推理
+            # 批量推理（模型内部已完成合成）
             model_output = model_interface.get_output(sar, config)
-            residual = model_output.generated
-            sar_base = model_output.intermediate['sar_base']
-
-            # 合成
-            composite = model_output_to_composite(
-                model_output=residual,
-                base=sar_base,
-                output_range=(0.0, 1.0),
-                clamp_negative=True,
-                normalize=True
-            )
+            generated = model_output.generated
 
             yield InferenceOutput(
-                generated=composite,
+                generated=generated,
                 sar=sar,
                 optical=optical,
                 metadata=batch.get('metadata', {})

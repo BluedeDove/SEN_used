@@ -6,8 +6,10 @@ v2.datasets - 数据集接口和实现
 
 from .base import BaseDataset
 from .registry import DATASET_REGISTRY, register_dataset, get_dataset_class, create_dataset, list_available_datasets
-from .sar_optical_dataset import WHUDataset
-from .sen12_dataset import SEN12Dataset
+
+# 导入各个数据集模块以触发注册
+from .whu.dataset import WHUDataset
+from .sen12.dataset import SEN12Dataset
 
 __all__ = [
     'BaseDataset',

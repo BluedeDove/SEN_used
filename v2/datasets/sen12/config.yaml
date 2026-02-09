@@ -1,0 +1,37 @@
+# ==================== SEN1-2 数据集配置 ====================
+# 适用于 SEN1-2 数据集
+# 数据结构: G:/Data/SEN1-2/train/s1/*.png, G:/Data/SEN1-2/train/s2/*.png
+
+# 数据集基础配置
+data:
+  type: "sen12"         # 使用SEN1-2数据集加载器
+
+  # SEN1-2数据集根目录
+  root: "/root/SEN1-2"
+
+  train_ratio: 0.9      # 90%训练，10%验证（当没有val目录时）
+  test_ratio: 0.1
+
+  normalize:
+    enabled: true
+    input_range: [0.0, 1.0]
+
+  # SEN1-2通道配置
+  # S1: 3通道 (SAR)
+  # S2: 3通道 (光学)
+  channels:
+    optical:
+      input: 3
+      use: 3
+      indices: [0, 1, 2]
+    sar:
+      input: 3
+      use: 3
+      indices: [0, 1, 2]
+
+  dataloader:
+    batch_size: 4
+    num_workers: 4
+    pin_memory: true
+    prefetch_factor: 2
+    persistent_workers: true

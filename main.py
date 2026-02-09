@@ -73,6 +73,7 @@ Examples:
     if args.command is None:
         parser.print_help()
         sys.exit(1)
+    #必须输入参数
 
     # 执行命令
     cmd_class = CommandRegistry.get(args.command)

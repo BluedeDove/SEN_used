@@ -1,0 +1,38 @@
+# ==================== WHU 数据集配置 ====================
+# 适用于 WHU SAR-Optical 数据集
+# 数据结构: data/train/sar/*.tif, data/train/opt/*.tif
+
+# 数据集基础配置
+data:
+  type: "whu"           # 使用WHU数据集加载器
+
+  # WHU数据集路径
+  train_dir: "data/train"
+  test_dir: "data/test"
+
+  train_ratio: 0.9      # 90%训练，10%验证
+  test_ratio: 0.1
+
+  normalize:
+    enabled: true
+    input_range: [0.0, 1.0]
+
+  # WHU通道配置
+  # SAR: 1通道 (单极化SAR)
+  # Optical: 4通道取前3 (RGB)
+  channels:
+    optical:
+      input: 4
+      use: 3
+      indices: [0, 1, 2]
+    sar:
+      input: 1
+      use: 1
+      indices: [0]
+
+  dataloader:
+    batch_size: 4
+    num_workers: 4
+    pin_memory: true
+    prefetch_factor: 2
+    persistent_workers: true

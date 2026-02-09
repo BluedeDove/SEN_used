@@ -18,7 +18,6 @@ import torch
 import numpy as np
 from typing import Dict, Optional, Tuple
 from torch.utils.data import DataLoader
-from core.numeric_ops import model_output_to_composite
 from utils.image_ops import save_image_v2, create_comparison_figure
 
 
@@ -125,19 +124,9 @@ def run_validation(
 
             batch_size = sar.shape[0]
 
-            # 获取模型输出
+            # 获取模型输出（模型内部已完成合成）
             model_output = model.get_output(sar, config)
-            residual = model_output.generated
-            sar_base = model_output.intermediate['sar_base']
-
-            # 合成
-            generated = model_output_to_composite(
-                residual,
-                sar_base,
-                output_range=(0.0, 1.0),
-                clamp_negative=True,
-                normalize=True
-            )
+            generated = model_output.generated  # 直接使用模型输出的最终图像
 
             # 计算指标
             for j in range(batch_size):
