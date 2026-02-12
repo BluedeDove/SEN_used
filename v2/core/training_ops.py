@@ -118,7 +118,8 @@ def setup_training(
         from torch.nn.parallel import DistributedDataParallel as DDP
         model_interface._model = DDP(
             model_interface._model,
-            device_ids=[device.index] if device.type == 'cuda' else None
+            device_ids=[device.index] if device.type == 'cuda' else None,
+            find_unused_parameters=True  # FlowMatching 模型中存在未使用的参数（global_cond, sar_base）
         )
 
     # 创建优化器

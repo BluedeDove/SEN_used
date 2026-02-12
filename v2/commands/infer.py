@@ -15,13 +15,13 @@ if __name__ == "__main__":
         sys.path.insert(0, str(v2_dir))
 
 import argparse
-import yaml
 from tqdm import tqdm
 from commands.base import BaseCommand, command
 from core.device_ops import setup_device_and_distributed, is_main_process
 from core.inference_ops import run_inference
 from utils.image_ops import save_image_v2
 from core.numeric_ops import composite_to_uint8
+from core.config_loader import load_config
 
 
 @command('infer')
@@ -37,9 +37,8 @@ class InferCommand(BaseCommand):
 
     def execute(self, args: argparse.Namespace):
         """执行推理"""
-        # 加载配置
-        with open(args.config, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
+        # 加载并合并配置
+        config = load_config(args.config, verbose=False)
 
         # 设置设备
         device, rank, world_size = setup_device_and_distributed(config)

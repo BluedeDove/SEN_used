@@ -71,7 +71,10 @@ def create_dataset(config: dict, split: str = 'train') -> BaseDataset:
     Returns:
         数据集实例
     """
-    dataset_type = config.get('data', {}).get('type', 'sar_optical')
+    # 支持 data.type 和 data.name 两种配置方式
+    # 优先使用 type（数据集配置中），其次使用 name（主配置中）
+    data_cfg = config.get('data', {})
+    dataset_type = data_cfg.get('type') or data_cfg.get('name', 'sen12')
     dataset_class = get_dataset_class(dataset_type)
     return dataset_class(config, split)
 

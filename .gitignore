@@ -53,7 +53,9 @@ env/
 *.pt
 *.ckpt
 *.safetensors
-models/
+# 注意：只忽略根目录的 models/ 文件夹（用于存放预训练权重）
+# 不忽略 v2/models/ 代码目录
+/models/
 checkpoints/
 pretrained/
 weights/
@@ -118,6 +120,9 @@ desktop.ini
 # ============================================
 # 项目特定（SRDM v2）
 # ============================================
+# 设计文档和计划（不需要版本控制）
+plans/
+
 # 推理输出
 inference_output/
 samples/

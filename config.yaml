@@ -3,11 +3,28 @@
 
 # 使用的模型（会自动加载 v2/models/{model.name}/config.yaml）
 model:
-  name: "srdm"  # 可选: srdm, ddpm, ...
+  name: "flowmatching"  # 可选: srdm, flowmatching, ...
+  output_range: [-1.0, 1.0]  # 模型输出范围 (SRDM预测残差)
 
 # 使用的数据集（会自动加载 v2/datasets/{data.name}/config.yaml）
 data:
   name: "sen12"  # 可选: sen12, whu, ...
+
+  # 数据归一化配置
+  normalize:
+    enabled: true
+    input_range: [0.0, 1.0]  # Dataset输出范围
+
+  # 通道配置（会被数据集配置覆盖）
+  channels:
+    optical:
+      input: 3
+      use: 3
+      indices: [0, 1, 2]
+    sar:
+      input: 3
+      use: 3
+      indices: [0, 1, 2]
 
 # ==================== 混合精度配置 ====================
 amp:
@@ -47,7 +64,7 @@ training:
 # ==================== 验证配置 ====================
 validation:
   enabled: true
-  interval: 10           # 每10epoch验证一次
+  interval: 1           # 每10epoch验证一次
   batch_size: 4
   max_samples: 50        # 最大验证样本数
 
@@ -56,6 +73,11 @@ validation:
     save_dir: "results"
     save_grid: true
     grid_cols: 4
+
+# ==================== 输出配置 ====================
+output:
+  composite_range: [0.0, 1.0]  # 合成后范围 (截断后归一化)
+  save_format: "uint8"         # 最终保存格式
 
 # ==================== 设备配置 ====================
 device:

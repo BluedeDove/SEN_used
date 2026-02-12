@@ -109,19 +109,36 @@ class DebugCommand(BaseCommand):
         return 0 if all_tests_passed else 1
 
     def _load_config(self, config_path: str):
-        """加载配置文件"""
-        if not Path(config_path).exists():
-            # 尝试不同路径
-            alt_path = Path(__file__).parent.parent / config_path
-            if alt_path.exists():
-                config_path = str(alt_path)
-
-        if not Path(config_path).exists():
-            print(f"Error: Config file not found: {config_path}")
-            return None
-
-        with open(config_path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
+            """
+            加载并合并配置文件
+    
+            使用 config_loader 加载并合并:
+            1. 模型配置 (v2/models/{model}/config.yaml)
+            2. 数据集配置 (v2/datasets/{dataset}/config.yaml)
+            3. 主配置 (config.yaml)
+            优先级: 主配置 > 数据集配置 > 模型配置
+            """
+            # 导入 config_loader
+            try:
+                from core.config_loader import load_config as load_merged_config
+                return load_merged_config(config_path, verbose=False)
+            except ImportError as e:
+                print(f"Warning: Failed to import config_loader: {e}")
+                print("Falling back to basic YAML loading...")
+    
+            # 回退到基础 YAML 加载
+            if not Path(config_path).exists():
+                # 尝试不同路径
+                alt_path = Path(__file__).parent.parent / config_path
+                if alt_path.exists():
+                    config_path = str(alt_path)
+    
+            if not Path(config_path).exists():
+                print(f"Error: Config file not found: {config_path}")
+                return None
+    
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f)
 
     def _run_ddp_test(self, verbose: bool) -> bool:
         """运行DDP代码测试"""
@@ -254,8 +271,11 @@ class DebugCommand(BaseCommand):
             model_interface = create_model(config, device=str(device))
             model_interface.eval()
 
+            # 从配置获取SAR通道数
+            sar_channels = config.get('data', {}).get('channels', {}).get('sar', {}).get('use', 3)
+
             # 创建测试输入
-            sar = torch.rand(2, 1, 128, 128).to(device)
+            sar = torch.rand(2, sar_channels, 128, 128).to(device)
 
             # 获取模型输出
             with torch.no_grad():

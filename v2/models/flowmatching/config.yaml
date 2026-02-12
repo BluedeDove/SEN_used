@@ -1,0 +1,46 @@
+# ==================== FlowMatching 模型配置 ====================
+# 
+# 基于 Rectified Flow 的 SAR-to-Optical 图像转换模型
+# 使用 DPM-Solver++ 进行高效采样
+#
+# =============================================================
+
+model:
+  type: "flowmatching"
+  name: "FlowMatching"
+  output_range: [-1.0, 1.0]  # 向量场输出范围
+
+# Flow Matching 模型配置
+flowmatching:
+  base_ch: 64
+  ch_mults: [1, 2, 4, 8]
+  num_blocks: 2
+  time_emb_dim: 256
+  dropout: 0.1
+  num_heads: 8
+  use_sar_base: false       # 是否将输出与 sar_base 合成
+
+# SAR 编码器配置 (复用 SRDM 的编码器)
+sar_encoder:
+  in_ch: 3                  # 输入通道数 (SAR)
+  base_ch: 64
+  ch_mults: [1, 2, 4, 8]
+  global_dim: 256
+
+# ODE 采样配置
+sampling:
+  method: "dpmpp"           # 采样方法: euler, heun, dpmpp
+  steps: 20                 # 采样步数 (dpmpp 可用 10-20 步)
+  order: 3                  # DPM-Solver++ 阶数 (1, 2, 3)
+  skip_type: "time_uniform" # 步长策略: time_uniform, time_quadratic
+  singlestep: true          # 是否使用单步方法 (更稳定)
+  denoise_to_zero: true     # 最后一步去噪
+
+# 训练配置 (与通用训练配置合并使用)
+training:
+  loss_type: "flow_matching"  # 固定使用 Flow Matching 损失
+  
+# 混合精度配置
+amp:
+  enabled: true
+  opt_level: "O1"

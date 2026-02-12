@@ -1,0 +1,56 @@
+# ==================== SRDM 模型配置 ====================
+# SAR-Residual Diffusion Model
+# 核心: 预测残差 R = Optical - SAR_base 而非完整图像
+
+# 模型基础配置
+model:
+  type: "srdm"
+  name: "SRDM"
+  output_range: [-1.0, 1.0]  # 模型输出范围 (SRDM预测残差)
+
+# SRDM网络结构配置
+srdm:
+  base_ch: 64
+  ch_mults: [1, 2, 4, 8]
+  num_blocks: 2
+  time_emb_dim: 256
+  dropout: 0.1
+  num_heads: 8
+
+# SRDM损失配置 (自由组合)
+srdm_loss:
+  # 启用的损失项列表 (从下方选择)
+  enabled:
+    - noise_mse      # 噪声预测MSE (推荐必开)
+    - x0_mse         # 残差MSE - 约束残差生成
+    - x0_l1          # 残差L1 - 约束残差生成
+
+  # 各损失项权重
+  weights:
+    noise_mse: 1.0
+    noise_l1: 1.0
+    x0_mse: 0.5       # 残差MSE权重
+    x0_l1: 0.3        # 残差L1权重
+    edge_sobel: 0.1
+    ssim: 0.1
+    perceptual: 0.2
+
+  # 感知损失特定配置
+  perceptual_layers: ["relu3_3"]
+
+# 扩散模型配置
+diffusion:
+  num_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+
+  sampling:
+    enabled: true          # 是否启用采样/验证
+    use_ddim: true         # 使用DDIM加速采样
+    ddim_steps: 50         # DDIM采样步数
+    ddim_eta: 0.0          # DDIM噪声参数 (0为确定性)
+
+# 输出配置
+output:
+  composite_range: [0.0, 1.0]  # 合成后范围
+  save_format: "uint8"         # 最终保存格式

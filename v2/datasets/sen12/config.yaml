@@ -30,8 +30,8 @@ data:
       indices: [0, 1, 2]
 
   dataloader:
-    batch_size: 4
-    num_workers: 4
+    batch_size: 45
+    num_workers: 8
     pin_memory: true
-    prefetch_factor: 2
+    prefetch_factor: 4
     persistent_workers: true

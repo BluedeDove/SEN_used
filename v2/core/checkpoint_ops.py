@@ -26,7 +26,8 @@ def save_checkpoint_v2(
     scheduler: Optional[Any],
     epoch: int,
     metrics: Dict[str, float],
-    save_path: str
+    save_path: str,
+    config: Optional[Dict[str, Any]] = None
 ):
     """
     保存检查点
@@ -38,21 +39,33 @@ def save_checkpoint_v2(
         epoch: 当前epoch
         metrics: 指标字典（如 {'psnr': 25.5, 'ssim': 0.85}）
         save_path: 保存路径
+        config: 配置字典（可选，用于保存模型类型信息）
     """
     # 只有主进程保存
     if not is_main_process():
         return
 
-    # 获取原始模型状态
-    model_state = get_raw_model(model).state_dict()
+    # 获取原始模型
+    raw_model = get_raw_model(model)
+    model_state = raw_model.state_dict()
+    
+    # 获取模型类型信息
+    model_type = getattr(raw_model, '__class__.__name__', 'unknown')
+    if hasattr(raw_model, 'config'):
+        model_config = raw_model.config
+    else:
+        model_config = config.get('model', {}) if config else {}
 
     # 构建检查点字典
     checkpoint = {
         'epoch': epoch,
+        'model_type': model_type,
+        'model_config': model_config,
         'model_state_dict': model_state,
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
-        'metrics': metrics
+        'metrics': metrics,
+        'config': config  # 保存完整配置（可选）
     }
 
     # 创建目录

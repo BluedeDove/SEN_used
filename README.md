@@ -1,19 +1,23 @@
-# SRDM v2 - SAR图像翻译扩散模型
+# SRDM v2 - SAR到光学图像翻译框架
 
-> 基于 SRDM（SAR-Residual Diffusion Model）的 SAR 到光学图像翻译框架
+> 支持 SRDM（残差扩散模型）和 Flow Matching 的现代化 SAR 到光学图像翻译框架
 
 ## 项目简介
 
-SRDM v2 是一个现代化的 SAR（合成孔径雷达）到光学图像翻译框架，核心创新是**预测残差** `R = Optical - SAR_base` 而非完整图像，大幅降低学习难度。
+SRDM v2 是一个支持多种生成模型的 SAR（合成孔径雷达）到光学图像翻译框架：
+
+- **SRDM**: 预测残差 `R = Optical - SAR_base`，大幅降低学习难度
+- **Flow Matching**: 基于 Rectified Flow 的直接图像生成
 
 ### 核心特性
 
-- **残差学习**：预测残差分布比完整图像更简单高效
-- **分层架构**：清晰的命令层/流程层/接口层/实现层分离
-- **配置驱动**：单一 YAML 配置控制所有行为
-- **DEBUG模式**：强制数值检验，确保数据流正确性
-- **DDP支持**：原生支持多卡分布式训练
-- **可扩展接口**：通过注册表轻松扩展新模型/数据集
+- **多模型支持**: SRDM（扩散）和 Flow Matching（流匹配）
+- **多数据集支持**: SEN1-2、WHU 等 SAR-光学配对数据集
+- **分层架构**: 命令层/流程层/接口层/实现层分离
+- **配置驱动**: YAML 配置 + 子配置组合，灵活可控
+- **健壮性设计**: 损坏文件自动跳过、训练中断自动保存
+- **DDP支持**: 原生多卡分布式训练，支持混合精度
+- **续训灵活**: 中断后可修改配置（lr、batch_size等）再续训
 
 ---
 
@@ -30,456 +34,407 @@ conda activate srdm
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
 # 安装其他依赖
-pip install pyyaml tqdm tifffile opencv-python numpy
+pip install pyyaml tqdm pillow numpy
+```
+
+### 项目结构
+
+```
+SEN_used/
+├── config.yaml              # 主配置文件
+├── main.py                  # 入口脚本
+├── experiments/             # 实验输出目录
+│   └── my_exp/
+│       ├── checkpoints/     # 模型检查点
+│       │   ├── latest.pth
+│       │   ├── epoch_0010.pth
+│       │   └── emergency_interrupt.pth  # 紧急保存
+│       ├── logs/            # 训练日志
+│       └── results/         # 验证结果
+└── v2/
+    ├── commands/            # 命令入口
+    ├── core/                # 核心流程
+    ├── models/              # 模型实现
+    │   ├── srdm/            # SRDM 模型
+    │   └── flowmatching/    # Flow Matching 模型
+    └── datasets/            # 数据集实现
+        ├── sen12/           # SEN1-2 配置
+        └── whu/             # WHU 配置
 ```
 
 ### 数据准备
 
+#### SEN1-2 数据集
+
 ```
-data/
-├── train/
-│   ├── sar/           # SAR图像 (1通道 TIFF)
-│   │   ├── 001.tif
-│   │   └── ...
-│   └── opt/           # 光学图像 (3/4通道 TIFF)
-│       ├── 001.tif
-│       └── ...
-└── test/              # 测试数据 (可选)
-    ├── sar/
-    └── opt/
+/root/SEN1-2/                    # 数据集根目录
+├── ROIs1158_spring/
+│   ├── s1_0/                    # SAR 样本目录
+│   │   └── ROIs1158_spring_s1_0_p1.png
+│   └── s2_0/                    # 光学样本目录
+│       └── ROIs1158_spring_s2_0_p1.png
+├── ROIs1868_summer/
+├── ROIs1970_fall/
+└── ROIs2017_winter/
 ```
 
-**数据说明**：
-- SAR图像：单通道灰度，支持 8/16 位 TIFF
-- 光学图像：支持 3/4 通道，自动取前 3 通道转换为 RGB
+**自动配对**: 根据文件名 `_s1_` 和 `_s2_` 自动配对 SAR 和光学图像。
 
 ---
 
 ## 命令行用法
 
-### 1. DEBUG 模式（首次运行必做）
-
-在训练前，运行 DEBUG 模式验证数值范围和数据流：
-
-```bash
-# 基本 DEBUG 测试
-python main.py debug --config config_srdm.yaml
-
-# 详细输出
-python main.py debug --config config_srdm.yaml --verbose
-
-# 只测试数据集
-python main.py debug --config config_srdm.yaml --test-dataset
-
-# 只测试模型
-python main.py debug --config config_srdm.yaml --test-model
-```
-
-**DEBUG 模式检验内容**：
-- 数据集输出范围是否在 [0, 1]
-- 模型输出范围是否在配置指定范围
-- 合成流程是否正确（SAR_base + Residual → [0, 1]）
-- uint8 转换是否正常
-
-### 2. 训练
+### 1. 训练
 
 #### 单卡训练
 
 ```bash
-# 创建新实验
-python main.py train --config config_srdm.yaml --experiment my_first_exp
-
-# 指定训练轮数
-python main.py train --config config_srdm.yaml --experiment my_exp --epochs 200
-
-# 覆盖批次大小
-python main.py train --config config_srdm.yaml --experiment my_exp --batch-size 8
+python main.py train --config config.yaml --experiment my_first_exp
 ```
 
-#### 续训
-
-```bash
-python main.py train --config config_srdm.yaml --experiment my_exp --resume
-```
-
-#### DDP 分布式训练（多卡）
+#### DDP 分布式训练（推荐）
 
 ```bash
 # 双卡训练
-torchrun --nproc_per_node=2 main.py train --config config_srdm.yaml --experiment ddp_exp
+torchrun --nproc_per_node=2 main.py train --config config.yaml --experiment my_exp
 
 # 四卡训练
-torchrun --nproc_per_node=4 main.py train --config config_srdm.yaml --experiment ddp_exp
+torchrun --nproc_per_node=4 main.py train --config config.yaml --experiment my_exp
 ```
 
-**DDP 配置建议**：
+**训练输出**:
+```
+experiments/my_exp/
+├── checkpoints/
+│   ├── latest.pth              # 最新检查点（每 epoch 更新）
+│   ├── epoch_0010.pth          # 每 10 epoch 保存
+│   └── emergency_interrupt.pth # 中断/崩溃时保存
+├── logs/                       # TensorBoard 日志
+└── results/                    # 验证可视化结果
+    └── epoch_0010/
+        ├── sample_000.png
+        └── ...
+```
+
+### 2. 续训（Resume）
+
+#### 基本续训
+
+```bash
+# 从 latest.pth 续训
+torchrun --nproc_per_node=2 main.py train --config config.yaml --experiment my_exp --resume
+```
+
+#### 修改配置后续训
+
+**支持修改的配置**（修改 config.yaml 后 --resume 自动生效）：
+
 ```yaml
+# config.yaml - 修改这些参数后 resume 会生效
+training:
+  num_epochs: 200          # 增加训练轮数
+  optimizer:
+    lr: 5e-5               # 降低学习率
+  gradient_accumulation:
+    steps: 4               # 调整梯度累积
+
 data:
   dataloader:
-    batch_size: 23        # 每张卡的 batch_size
-    num_workers: 4        # 每张卡的 worker 数
-    pin_memory: true
+    batch_size: 45         # 修改 batch size
+    num_workers: 8         # 修改数据加载线程
+```
+
+**输出示例**:
+```
+Resuming from experiments/my_exp/checkpoints/latest.pth
+  Saved model type: FlowMatchingModel
+  Current model type: FlowMatchingModel
+  Updating learning rate: 0.0001 -> 5e-05
+Resumed from epoch 51
+  Current config will be used for: batch_size, lr, num_epochs, etc.
+Epoch 52/200:  45%|████▌| 2822/6283 [23:12<28:18, 2.04it/s, loss=0.0892]
 ```
 
 ### 3. 推理
 
 ```bash
-# 基础推理
 python main.py infer \
-    --config config_srdm.yaml \
-    --checkpoint experiments/my_exp/checkpoints/best.pth \
+    --config config.yaml \
+    --checkpoint experiments/my_exp/checkpoints/latest.pth \
     --output results/
-
-# 限制样本数
-python main.py infer \
-    --config config_srdm.yaml \
-    --checkpoint experiments/my_exp/checkpoints/best.pth \
-    --output results/ \
-    --max-samples 50
 ```
 
-### 4. 查看帮助
+### 4. DEBUG 模式
 
 ```bash
-# 主帮助
-python main.py --help
+# 基本调试
+python main.py debug --config config.yaml
 
-# 各命令帮助
+# 详细输出
+python main.py debug --config config.yaml --verbose
+
+# 只测试数据集
+python main.py debug --config config.yaml --test-dataset
+
+# 只测试模型
+python main.py debug --config config.yaml --test-model
+```
+
+### 5. 查看帮助
+
+```bash
+python main.py --help
 python main.py train --help
 python main.py infer --help
-python main.py debug --help
 ```
 
 ---
 
 ## 配置文件详解
 
-### 完整配置示例
+### 配置结构
+
+项目使用**主配置 + 子配置**的组合方式：
+
+```yaml
+# config.yaml (主配置)
+data:
+  type: "sen12"                    # 使用 v2/datasets/sen12/config.yaml
+
+model:
+  name: "flowmatching"             # 使用 v2/models/flowmatching/config.yaml
+
+training:
+  num_epochs: 100
+  optimizer:
+    type: "adamw"
+    lr: 1e-4
+```
+
+### 完整主配置示例
 
 ```yaml
 # ==================== 数据配置 ====================
 data:
-  type: "sar_optical"           # 数据集类型
-  train_dir: "data/train"
-  test_dir: "data/test"
-  train_ratio: 0.9              # 训练集比例
-
-  normalize:
-    enabled: true
-    input_range: [0.0, 1.0]     # Dataset 输出范围
-
-  channels:
-    optical:
-      input: 4                  # 输入通道数
-      use: 3                    # 使用通道数
-      indices: [0,1,2]          # 通道索引
-    sar:
-      input: 1
-      use: 1
-      indices: [0]
-
-  dataloader:
-    batch_size: 4
-    num_workers: 4
-    pin_memory: true
-    prefetch_factor: 2
-    persistent_workers: true
+  type: "sen12"                    # 数据集类型: sen12, whu
 
 # ==================== 模型配置 ====================
 model:
-  type: "srdm"                  # 模型类型
-  name: "SRDM"
-  output_range: [-1.0, 1.0]     # 模型输出范围
+  name: "flowmatching"             # 模型: flowmatching, srdm
 
-# SRDM 专用配置
-srdm:
+# ==================== 训练配置 ====================
+training:
+  num_epochs: 100
+  
+  optimizer:
+    type: "adamw"
+    lr: 1e-4
+    weight_decay: 0.01
+    
+  scheduler:
+    type: "cosine"
+    warmup_epochs: 5
+    min_lr: 1e-6
+    
+  gradient_clipping:
+    enabled: true
+    max_norm: 1.0
+    
+  gradient_accumulation:
+    steps: 2                       # 梯度累积步数
+    
+  mixed_precision:
+    enabled: true                  # 混合精度训练
+
+# ==================== 验证配置 ====================
+validation:
+  interval: 10                     # 每 10 epoch 验证一次
+  
+# ==================== 设备配置 ====================
+device:
+  use_cuda: true
+  random_seed: 42
+
+# ==================== 其他配置 ====================
+output:
+  save_interval: 10                # 每 10 epoch 保存检查点
+```
+
+### 数据集子配置
+
+位置: `v2/datasets/sen12/config.yaml`
+
+```yaml
+data:
+  type: "sen12"
+  root: "/root/SEN1-2"
+  train_ratio: 0.9
+
+  normalize:
+    enabled: true
+    input_range: [0.0, 1.0]
+
+  channels:
+    optical:
+      input: 3
+      use: 3
+    sar:
+      input: 3
+      use: 3
+
+  dataloader:
+    batch_size: 45
+    num_workers: 8
+    pin_memory: true
+    prefetch_factor: 4
+    persistent_workers: true
+```
+
+### 模型子配置
+
+位置: `v2/models/flowmatching/config.yaml`
+
+```yaml
+model:
+  name: "flowmatching"
+  output_range: [-1.0, 1.0]
+
+flowmatching:
   base_ch: 64
   ch_mults: [1, 2, 4, 8]
   num_blocks: 2
   time_emb_dim: 256
   dropout: 0.1
   num_heads: 8
+  use_sar_base: false
 
-# ==================== 损失配置 ====================
-srdm_loss:
-  enabled:
-    - noise_mse        # 噪声预测 MSE（推荐）
-    - x0_mse           # 残差 MSE
-    - x0_l1            # 残差 L1
-    # - edge_sobel     # 边缘损失
-    # - ssim           # SSIM 损失
-    # - perceptual     # 感知损失
-
-  weights:
-    noise_mse: 1.0
-    x0_mse: 0.5
-    x0_l1: 0.3
-    edge_sobel: 0.1
-    ssim: 0.1
-    perceptual: 0.2
-
-# ==================== 扩散配置 ====================
-diffusion:
-  num_timesteps: 1000
-  beta_start: 0.0001
-  beta_end: 0.02
-
-  sampling:
-    enabled: true
-    use_ddim: true            # 使用 DDIM 加速
-    ddim_steps: 50            # DDIM 采样步数
-    ddim_eta: 0.0             # 0=确定性，1=随机
-
-# ==================== 训练配置 ====================
-training:
-  num_epochs: 100
-
-  optimizer:
-    type: "adamw"
-    lr: 0.0002
-    weight_decay: 0.01
-    betas: [0.9, 0.999]
-
-  scheduler:
-    type: "cosine"
-    warmup_epochs: 5
-    min_lr: 0.000001
-
-  mixed_precision:
-    enabled: true             # 混合精度训练
-
-  gradient_clipping:
-    enabled: true
-    max_norm: 1.0
-
-  gradient_accumulation:
-    enabled: true
-    steps: 2                  # 累积步数，等效 batch_size * 2
-
-# ==================== 验证配置 ====================
-validation:
-  enabled: true
-  interval: 10                # 每 N epoch 验证一次
-  batch_size: 4
-  max_samples: 50             # 最大验证样本数
-
-  save_results:
-    enabled: true
-    save_dir: "results"
-
-# ==================== 设备配置 ====================
-device:
-  use_cuda: true
-  random_seed: 42
-  deterministic: false
-```
-
-### 关键配置说明
-
-| 配置项 | 说明 | 建议值 |
-|--------|------|--------|
-| `srdm.ch_mults` | UNet 通道倍数 | `[1, 2, 4, 8]` |
-| `srdm.num_blocks` | 每层 NAFBlock 数 | `2` |
-| `training.mixed_precision.enabled` | 混合精度 | `true` (节省显存) |
-| `training.gradient_accumulation.steps` | 梯度累积 | `2-4` (等效增大 batch) |
-| `diffusion.sampling.ddim_steps` | 采样步数 | `50` (质量/速度平衡) |
-| `validation.interval` | 验证间隔 | `5-10` epoch |
-
----
-
-## 训练输出结构
-
-```
-experiments/
-└── {experiment_name}/
-    ├── checkpoints/              # 模型检查点
-    │   ├── latest.pth            # 最新检查点
-    │   ├── best.pth              # 最佳检查点
-    │   └── epoch_0010.pth        # 定期保存的检查点
-    ├── logs/                     # 训练日志
-    │   └── train.log
-    ├── results/                  # 验证结果
-    │   └── epoch_0010/           # 每个 epoch 的验证图像
-    │       ├── sample_0000.png   # SAR | Generated | GT
-    │       └── ...
-    └── config.yaml               # 保存的配置副本
-```
-
-**验证结果图像布局**：
-```
-┌─────────┬────────────┬─────────────┐
-│  SAR    │  Generated │ Ground Truth│
-├─────────┼────────────┼─────────────┤
-│SAR Base │  Residual  │ Target Res. │
-└─────────┴────────────┴─────────────┘
+sar_encoder:
+  in_ch: 3
+  base_ch: 64
+  ch_mults: [1, 2, 4, 8]
 ```
 
 ---
 
-## 性能优化指南
+## 健壮性设计
 
-### 显存优化
+### 1. 损坏文件自动跳过
 
-```yaml
-# 减小 batch_size
-data:
-  dataloader:
-    batch_size: 2
+数据集中有约 0.4% 的文件可能损坏，训练时会：
+- 自动跳过损坏文件
+- 尝试加载其他样本（最多10次）
+- 极端情况下返回零张量，保证训练不中断
 
-# 启用混合精度
-training:
-  mixed_precision:
-    enabled: true
+### 2. 训练中断自动保存
 
-# 使用梯度累积
-training:
-  gradient_accumulation:
-    enabled: true
-    steps: 4          # 等效 batch_size = 2 * 4 = 8
-
-# 减少 UNet 通道数
-srdm:
-  base_ch: 32         # 默认 64
-  ch_mults: [1, 2, 4, 8]  # 或使用 [1, 2, 2, 4]
+**Ctrl+C 中断**:
+```
+[INTERRUPT] Training interrupted by user
+[SAVING] Attempting to save emergency checkpoint...
+[SAVED] Emergency checkpoint saved to: experiments/my_exp/checkpoints/emergency_interrupt.pth
+[SAVED] Also updated: experiments/my_exp/checkpoints/latest.pth
+[INFO] Resume with: --resume (will continue from epoch 52)
 ```
 
-### 训练速度优化
+**意外错误**:
+- 自动保存 `emergency_interrupt.pth`
+- 同时更新 `latest.pth`
+- 使用 `--resume` 可从中断点恢复
 
-```yaml
-# 增加 worker 数
-data:
-  dataloader:
-    num_workers: 8
-    prefetch_factor: 4
-    persistent_workers: true
+### 3. 配置修改续训
 
-# 使用 DDIM 加速验证
-diffusion:
-  sampling:
-    use_ddim: true
-    ddim_steps: 50     # 对比 1000 步快 20 倍
-
-# 减少验证频率
-validation:
-  interval: 20         # 每 20 epoch 验证一次
-  max_samples: 20      # 减少验证样本数
-```
+支持在续训时修改：
+- `batch_size`, `num_workers`（数据加载）
+- `lr`, `weight_decay`（优化器参数）
+- `num_epochs`, `validation_interval`（训练流程）
+- `gradient_clipping`, `mixed_precision`（训练设置）
 
 ---
 
-## 故障排除
+## 模型架构
 
-### 问题：DEBUG 模式报错
+### Flow Matching 模型
 
-```
-ValueError: SAR sample 0 数值范围错误
-```
-
-**解决**：
-- 检查数据归一化配置
-- 确认 TIFF 文件格式正确
-- 运行 `python main.py debug --verbose` 查看详细信息
-
-### 问题：显存不足 (OOM)
+基于 Rectified Flow 的 SAR-to-Optical 翻译：
 
 ```
-RuntimeError: CUDA out of memory
+SAR Input [B, 3, H, W]
+    ↓
+SAR Encoder (U-Net 风格下采样)
+    ↓
+Multi-scale Features + Global Condition
+    ↓
+Flow Matching UNet (预测向量场)
+    ↓
+DPM-Solver++ 采样
+    ↓
+Optical Output [B, 3, H, W]
 ```
 
-**解决**：
-```yaml
-# 减小 batch_size
-data:
-  dataloader:
-    batch_size: 2
+### SRDM 模型
 
-# 启用混合精度
-training:
-  mixed_precision:
-    enabled: true
-
-# 使用梯度累积
-training:
-  gradient_accumulation:
-    enabled: true
-    steps: 4
-```
-
-### 问题：DDP 训练卡住
+基于扩散的残差学习：
 
 ```
-[WARNING] NCCL operation failed
+SAR Input
+    ↓
+SAR Encoder → SAR_base + Features
+    ↓
+Residual Diffusion (预测残差)
+    ↓
+SAR_base + Residual = Optical
 ```
-
-**解决**：
-- 检查 NCCL 环境变量已在 `main.py` 中设置
-- 确保所有节点网络互通
-- 使用 `torchrun` 而非 `python` 启动
-
-### 问题：Loss 不下降
-
-**排查步骤**：
-1. 运行 `python main.py debug --verbose` 检查数值范围
-2. 降低学习率：`lr: 0.0001`
-3. 检查数据对齐：SAR 和光学图像是否对应
-4. 减少验证频率，增加训练轮数
 
 ---
 
 ## 扩展开发
 
-### 新增损失函数
+### 添加新模型
 
-```python
-# v2/models/srdm/losses.py
-class SRDMLoss(nn.Module):
-    def forward(self, ...):
-        # 新增损失项
-        if 'your_loss' in self.enabled:
-            w = self.weights.get('your_loss', 0.1)
-            l = your_loss_function(pred_optical, target_optical)
-            loss_dict['your_loss'] = l
-            total_loss += w * l
-```
+1. 在 `v2/models/` 创建新目录
+2. 实现 `interface.py` 继承 `BaseModelInterface`
+3. 注册模型：`@register_model('my_model')`
+4. 创建 `config.yaml`
 
-### 新增模型架构
+### 添加新数据集
 
-参考 `v2/models/srdm/interface.py` 实现：
-
-```python
-from models.base import BaseModelInterface, CompositeMethod
-
-@register_model('your_model')
-class YourModelInterface(BaseModelInterface):
-    def build_model(self, device='cpu'):
-        pass
-
-    def get_output(self, sar, config):
-        return ModelOutput(
-            generated=output,
-            output_range=self.get_output_range(),
-            intermediate={...},
-            metadata={...}
-        )
-```
-
-详细扩展指南请参考 `CLAUDE.md`。
+1. 在 `v2/datasets/` 创建新目录
+2. 实现 `dataset.py` 继承 `BaseDataset`
+3. 注册数据集：`DATASET_REGISTRY['my_dataset'] = MyDataset`
+4. 创建 `config.yaml`
 
 ---
 
-## 版本历史
+## 常见问题
 
-| 版本 | 日期 | 说明 |
-|------|------|------|
-| v2.0 | 2026-02-05 | 初始架构设计，实现 SRDM 核心功能 |
+### Q: 训练时显示损坏文件警告
+A: 这是正常的（约0.4%损坏率），系统会自动跳过。如需完全清理：
+```bash
+cd /root/SEN1-2 && find . -name "*.png" -size 0 -delete
+```
+
+### Q: 如何降低显存占用？
+A: 修改 `config.yaml`:
+```yaml
+training:
+  gradient_accumulation:
+    steps: 4        # 增大累积步数，降低 batch_size
+data:
+  dataloader:
+    batch_size: 20  # 降低 batch size
+```
+
+### Q: Resume 时学习率没有更新？
+A: 确保修改的是主 `config.yaml` 中的 `training.optimizer.lr`，而非子配置。
+
+### Q: DDP 训练卡住？
+A: 检查：
+1. 所有进程的 batch_size 相同
+2. 没有损坏文件导致某些进程卡住
+3. 使用 `drop_last=True` 避免最后批次大小不一致
 
 ---
 
 ## 许可证
 
 MIT License
-
-## 致谢
-
-- 扩散模型实现参考：DDPM、DDIM 论文
-- UNet 架构参考：NAFNet、Attention UNet
