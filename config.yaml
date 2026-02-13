@@ -29,7 +29,7 @@ data:
 # ==================== 混合精度配置 ====================
 amp:
   enabled: true           # 是否启用自动混合精度 (AMP)
-  use_bf16: false         # 是否使用 BF16 (需要 A100/A800 等 Ampere 架构)
+  use_bf16: true         # 是否使用 BF16 (需要 A100/A800 等 Ampere 架构)
                          # FP16 (false) - 通用，但可能需要梯度缩放
                          # BF16 (true)  - A100/A800 推荐，更稳定，无需梯度缩放
   init_scale: 65536.0     # FP16 梯度初始缩放因子 (2^16)
@@ -41,7 +41,7 @@ training:
 
   optimizer:
     type: "adamw"
-    lr: 0.0002
+    lr: 0.0001
     weight_decay: 0.01
     betas: [0.9, 0.999]
 
@@ -64,7 +64,7 @@ training:
 # ==================== 验证配置 ====================
 validation:
   enabled: true
-  interval: 1           # 每10epoch验证一次
+  interval: 1
   batch_size: 4
   max_samples: 50        # 最大验证样本数
 

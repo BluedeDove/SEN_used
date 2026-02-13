@@ -50,12 +50,19 @@ def compute_ssim(img1: torch.Tensor, img2: torch.Tensor, window_size: int = 11) 
         window_size: 窗口大小
 
     Returns:
-        SSIM值
+        SSIM值 (Python float)
     """
     from models.srdm.losses import SSIMLoss
 
+    # 确保图像在同一设备上
+    if img1.device != img2.device:
+        img2 = img2.to(img1.device)
+
     ssim_loss = SSIMLoss(window_size=window_size)
-    ssim_val = ssim_loss(img1, img2)
+    ssim_loss = ssim_loss.to(img1.device)  # 确保损失模块在正确设备上
+
+    with torch.no_grad():
+        ssim_val = ssim_loss(img1, img2)
 
     return ssim_val.item()
 
@@ -107,17 +114,21 @@ def save_validation_samples(
     save_path = Path(save_dir)
     save_path.mkdir(parents=True, exist_ok=True)
 
-    # 转换为numpy - 确保先移回CPU并断开计算图
+    # 转换为numpy - 统一使用 [batch_idx:batch_idx+1] 保持 batch 维度
+    # 使用 detach().cpu() 顺序避免 cuda tensor 转换错误
+    def tensor_to_numpy(t):
+        """安全地将 tensor 转换为 numpy，保持 [H, W, C] 格式"""
+        t = t[batch_idx:batch_idx+1].detach().cpu().numpy()  # [1, C, H, W]
+        t = t[0].transpose(1, 2, 0)  # [H, W, C]
+        return t
+
     try:
-        sar_np = sar[batch_idx].cpu().detach().numpy().transpose(1, 2, 0)
-        gen_np = generated[batch_idx:batch_idx+1].cpu().detach().numpy().transpose(1, 2, 0)
-        opt_np = optical[batch_idx:batch_idx+1].cpu().detach().numpy().transpose(1, 2, 0)
-    except RuntimeError as e:
-        # 如果转换失败，尝试更安全的方式
-        print(f"[WARN] Tensor conversion failed: {e}, trying alternative method")
-        sar_np = sar[batch_idx].clone().cpu().numpy().transpose(1, 2, 0)
-        gen_np = generated[batch_idx:batch_idx+1].clone().cpu().numpy().transpose(1, 2, 0)
-        opt_np = optical[batch_idx:batch_idx+1].clone().cpu().numpy().transpose(1, 2, 0)
+        sar_np = tensor_to_numpy(sar)
+        gen_np = tensor_to_numpy(generated)
+        opt_np = tensor_to_numpy(optical)
+    except Exception as e:
+        print(f"[WARN] Tensor conversion failed: {e}")
+        return
 
     # 确保是uint8
     def to_uint8(img):

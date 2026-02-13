@@ -128,11 +128,12 @@ class SRDMLoss(nn.Module):
 class SSIMLoss(nn.Module):
     """SSIM损失"""
 
-    def __init__(self, window_size=11):
+    def __init__(self, window_size=11, channel=3):
         super().__init__()
         self.window_size = window_size
-        self.channel = 3
-        self.window = self.create_window(window_size, self.channel)
+        self.channel = channel
+        # 使用 register_buffer 使窗口能够自动跟随模型设备
+        self.register_buffer('window', self.create_window(window_size, channel))
 
     def create_window(self, window_size, channel):
         """创建高斯窗口"""
@@ -148,7 +149,8 @@ class SSIMLoss(nn.Module):
 
     def forward(self, img1, img2):
         """计算SSIM"""
-        window = self.window.to(img1.device)
+        # window 现在是 buffer，会自动在正确的设备上
+        window = self.window
 
         mu1 = F.conv2d(img1, window, padding=self.window_size//2, groups=self.channel)
         mu2 = F.conv2d(img2, window, padding=self.window_size//2, groups=self.channel)

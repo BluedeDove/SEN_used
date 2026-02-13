@@ -31,7 +31,7 @@ data:
 
   dataloader:
     batch_size: 45
-    num_workers: 8
+    num_workers: 12
     pin_memory: true
     prefetch_factor: 4
     persistent_workers: true

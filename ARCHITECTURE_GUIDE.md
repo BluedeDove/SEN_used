@@ -391,7 +391,16 @@ v2/
 │   ├── base.py                # 命令基类
 │   ├── train.py
 │   ├── infer.py
-│   └── debug.py               # 强制数值检验
+│   ├── debug.py               # 强制数值检验
+│   └── exp.py                 # 实验脚本命令（新增）
+├── exp_script/                # 实验脚本系统（新增）
+│   ├── __init__.py
+│   ├── context.py             # ExpContext 沙盒上下文
+│   ├── runner.py              # 脚本加载与执行器
+│   ├── errors.py              # 错误定义
+│   ├── README.md              # 使用文档
+│   ├── example_analysis.py    # 示例脚本
+│   └── logs/                  # 错误日志目录
 ├── tests/                     # 测试
 │   └── test_numeric_ops.py
 └── main.py                    # 入口
@@ -399,9 +408,120 @@ v2/
 
 ---
 
-## 9. 版本历史
+## 9. 实验脚本系统 (Experiment Script System)
+
+### 9.1 系统定位
+
+实验脚本系统提供了一个**沙盒化**的实验环境：
+- **高自由度**：支持动态加载任意 `.py` 实验脚本
+- **高容错**：单点错误不导致程序崩溃，完善的错误捕获和日志记录
+- **沙盒隔离**：脚本通过 `ExpContext` 访问项目资源，禁止直接导入底层模块
+
+### 9.2 架构设计
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ExpCommand (commands/exp.py)                                │
+│  - 解析参数、调用 ExperimentRunner                           │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  ExperimentRunner (exp_script/runner.py)                     │
+│  - 发现脚本 → 验证规范 → 加载模块 → 安全执行                 │
+│  - 捕获异常 → 记录日志 → 输出报告                            │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  ExpContext (exp_script/context.py)                          │
+│  - 配置管理 API                                              │
+│  - 设备管理 API                                              │
+│  - 模型/数据集 API                                           │
+│  - 数值转换 API                                              │
+│  - 推理/训练/验证 API                                        │
+│  - 可视化 API                                                │
+│  - 安全执行 API (safe_run, safe_call)                        │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  核心模块 (core/, models/, datasets/, utils/)               │
+│  - 被 ExpContext 封装和代理                                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 9.3 脚本编写规范
+
+**入口函数**：
+```python
+def run_experiment(ctx, **kwargs):
+    """
+    实验入口函数
+    
+    Args:
+        ctx: ExpContext 实例，提供所有API访问
+        **kwargs: 额外参数
+        
+    Returns:
+        任意类型
+    """
+    pass
+```
+
+**禁止事项**：
+1. 禁止直接导入底层模块（`from v2.core.numeric_ops import ...`）
+2. 禁止直接访问 `model.module`
+3. 禁止手动处理数值范围转换
+4. 必须使用 `ctx.safe_run()` 包装高风险操作
+
+### 9.4 ExpContext API 注册规范
+
+**新增功能必须在 ExpContext 注册**：
+
+如果在核心模块（如 `numeric_ops.py`、`device_ops.py` 等）中添加了新的封装函数，**必须**在 `ExpContext` 中注册对应的包装方法。
+
+**注册步骤**：
+1. 在 `v2/exp_script/context.py` 顶部导入新函数
+2. 在 `ExpContext` 类中添加对应的包装方法
+3. 按照功能分类放置（数值转换、设备管理等）
+4. 编写 docstring 说明参数和返回值
+
+**示例**：
+```python
+# 1. 导入新函数
+from core.numeric_ops import new_normalize_function
+
+class ExpContext:
+    # ... 其他方法 ...
+    
+    # 2. 添加包装方法（放在数值转换 API 区域）
+    def new_normalize(self, tensor, param):
+        """
+        新的归一化函数
+        
+        Args:
+            tensor: 输入张量
+            param: 参数
+            
+        Returns:
+            归一化后的张量
+        """
+        return new_normalize_function(tensor, param)
+```
+
+**注册 checklist**：
+- [ ] 新函数已添加到对应的 `core/` 模块
+- [ ] 新函数已导入到 `exp_script/context.py`
+- [ ] `ExpContext` 中已添加对应的包装方法
+- [ ] 方法已按功能分类放置
+- [ ] 方法包含完整的 docstring
+- [ ] 方法已在 `README.md` 中记录
+- [ ] 已通过 `python main.py exp --name example_analysis` 测试
+
+---
+
+## 10. 版本历史
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
 | v2.0 | 2026-02-05 | 初始架构设计 |
 | v2.1 | 2026-02-13 | 新增可视化模块（visualization_ops.py），重构训练/验证流程，集成loss曲线和对比报告生成 |
+| v2.2 | 2026-02-13 | 新增实验脚本系统（exp_script/），支持动态加载和高容错执行 |

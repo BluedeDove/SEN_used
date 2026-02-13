@@ -153,7 +153,6 @@ v2/
 │   ├── numeric_ops.py        # 数值转换(万年不变)
 │   ├── device_ops.py         # 设备管理(万年不变)
 │   ├── checkpoint_ops.py     # 检查点管理(万年不变)
-│   ├── ddp_validation.py     # DDP代码验证(无需多卡)
 │   ├── inference_ops.py      # 推理流程封装
 │   ├── training_ops.py       # 训练流程封装（含训练循环、epoch训练、检查点保存）
 │   ├── validation_ops.py     # 验证流程封装（含DDP测试、指标计算）
@@ -175,8 +174,9 @@ v2/
 │   ├── __init__.py
 │   ├── base.py               # 数据集接口基类
 │   ├── registry.py           # 数据集注册表
-│   ├── sar_optical_dataset.py # WHU SAR-光学数据集
-│   └── sen12_dataset.py      # SEN1-2 数据集
+│   └── sen12/                # SEN1-2 数据集
+│       ├── config.yaml
+│       └── dataset.py
 ├── utils/                    # 工具函数
 │   ├── __init__.py
 │   └── image_ops.py          # 基础图像操作
@@ -185,12 +185,21 @@ v2/
 │   ├── base.py               # 命令基类
 │   ├── train.py
 │   ├── infer.py
-│   └── debug.py              # 强制数值检验
+│   ├── debug.py              # 强制数值检验
+│   └── exp.py                # 实验脚本命令
 ├── engine/                   # 训练引擎
 │   ├── __init__.py
 │   ├── trainer.py            # 训练循环
 │   ├── step.py               # 单步训练
 │   └── validator.py          # 验证逻辑
+├── exp_script/               # 实验脚本系统
+│   ├── __init__.py
+│   ├── context.py            # ExpContext 沙盒上下文
+│   ├── runner.py             # 脚本加载与执行器
+│   ├── errors.py             # 错误定义
+│   ├── README.md             # 使用文档
+│   ├── example_analysis.py   # 示例脚本
+│   └── logs/                 # 错误日志目录
 └── main.py                   # 入口
 ```
 
@@ -335,6 +344,8 @@ v2/
 4. 禁止在 Dataset 外部重复归一化
 5. 禁止在命令层重复实现加载逻辑
 6. 禁止在命令层直接调用 matplotlib（用 `visualization_ops` 封装）
+7. **禁止在实验脚本中直接导入底层模块**（必须通过 `ExpContext`）
+8. **禁止在实验脚本中直接处理数值范围**（必须使用 `ctx` 提供的数值 API）
 
 **必须事项**：
 1. 必须使用 `validate_range()` 验证数值范围
@@ -342,6 +353,7 @@ v2/
 3. 必须检查 DDP 下主进程判断（`is_main_process()`）
 4. 必须使用注册表注册新模型/数据集
 5. 必须实现 `get_output_range()` 和 `get_composite_method()`
+6. **新增核心模块函数必须在 `ExpContext` 中注册**（见下方扩展指南）
 
 ### 性能优化指导
 
@@ -433,6 +445,93 @@ class YourCommand(BaseCommand):
 # 2. 在 main.py 中导入
 from commands.your_command import YourCommand
 ```
+
+#### 新增实验脚本
+
+```python
+# 1. 在 exp_script/your_experiment.py 下实现
+
+def run_experiment(ctx, **kwargs):
+    """
+    实验入口函数
+    
+    Args:
+        ctx: ExpContext 实例，提供所有API访问
+        **kwargs: 额外参数
+        
+    Returns:
+        任意类型
+    """
+    # 加载配置
+    config = ctx.load_config()
+    
+    # 获取数据集（安全执行）
+    dataset = ctx.safe_run(
+        lambda: ctx.create_dataset(split='val'),
+        default=None,
+        error_msg="Failed to create dataset"
+    )
+    
+    # 你的实验逻辑...
+    
+    return {'status': 'success'}
+
+# 2. 运行脚本
+# python main.py exp --name your_experiment
+```
+
+**脚本编写规则**：
+- 必须定义 `run_experiment(ctx)` 入口函数
+- 禁止直接导入底层模块，必须通过 `ctx` 访问
+- 高风险操作使用 `ctx.safe_run()` 包装
+- 详见 `v2/exp_script/README.md`
+
+#### 新增 ExpContext API（重要！）
+
+如果在核心模块（如 `numeric_ops.py`、`device_ops.py` 等）中添加了新的封装函数，**必须**在 `ExpContext` 中注册对应的包装方法。
+
+**注册步骤**：
+
+1. **导入函数**：在 `v2/exp_script/context.py` 顶部导入新函数
+2. **添加方法**：在 `ExpContext` 类中添加对应的包装方法
+3. **分类放置**：按照功能分类（数值转换、设备管理等）放置在对应区域
+4. **编写文档**：为方法编写 docstring，说明参数和返回值
+5. **更新文档**：在 `v2/exp_script/README.md` 中记录新 API
+
+**示例**：
+
+```python
+# v2/exp_script/context.py
+
+# 1. 导入新函数（在文件顶部）
+from core.numeric_ops import new_normalize_function
+
+class ExpContext:
+    # ... 其他方法 ...
+    
+    # 2. 添加包装方法（放在数值转换 API 区域）
+    def new_normalize(self, tensor: torch.Tensor, param: float) -> torch.Tensor:
+        """
+        新的归一化函数
+        
+        Args:
+            tensor: 输入张量
+            param: 归一化参数
+            
+        Returns:
+            归一化后的张量
+        """
+        return new_normalize_function(tensor, param)
+```
+
+**注册 checklist**：
+- [ ] 新函数已添加到对应的 `core/` 模块
+- [ ] 新函数已导入到 `exp_script/context.py`
+- [ ] `ExpContext` 中已添加对应的包装方法
+- [ ] 方法已按功能分类放置（配置、设备、数值、推理、训练等）
+- [ ] 方法包含完整的 docstring
+- [ ] 方法已在 `exp_script/README.md` 中记录
+- [ ] 已通过 `python main.py exp --name example_analysis` 测试
 
 ### 提交规范
 
