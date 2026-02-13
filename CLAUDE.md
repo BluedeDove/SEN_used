@@ -19,11 +19,13 @@
 │  - 唯一职责: 解析参数、调用高层API、输出结果                    │
 │  - 禁止包含业务逻辑                                           │
 └─────────────────────────────────────────────────────────────┘
-                            ↓
+                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  流程层 (core/inference_ops.py, training_ops.py)             │
-│  - 职责: 编排训练/推理流程                                     │
+│  流程层 (core/inference_ops.py, training_ops.py,             │
+│           core/validation_ops.py, core/visualization_ops.py) │
+│  - 职责: 编排训练/推理/验证/可视化流程                         │
 │  - 通过接口调用模型和数据集                                    │
+│  - visualization_ops: loss曲线、对比报告生成（训练结束/中断时） │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -87,7 +89,29 @@ cd v2 && python -m commands.debug --test-ddp --verbose
 - DDP包装和原始模型保存的状态一致
 - 恢复后的模型可以正常继续训练
 
-实现位置：`core/ddp_validation.py`
+实现位置：`core/validation_ops.py`（已合并原 ddp_validation.py 内容）
+
+### 可视化功能封装（新增）
+
+训练/推理的可视化功能已封装到 `core/visualization_ops.py`：
+
+```python
+# 训练过程可视化
+log_loss(log_dir, epoch, loss, val_metrics)          # 实时记录训练日志
+plot_loss_curve(log_file, save_path, title)          # 绘制loss/psnr/ssim曲线
+generate_validation_report(result_dir, report_dir, epoch, is_validation)  # 生成验证报告
+
+# 推理可视化
+create_inference_comparison(sar, generated, optical)   # 创建单张对比图（SAR|Gen|Opt）
+create_comparison_figure(sample_paths, save_path, title, samples_per_row)  # 汇总报告
+```
+
+**使用位置**：
+- `training_ops.run_training_loop()` - 训练结束/中断时自动调用 `plot_loss_curve()`
+- `training_ops.run_training_loop()` - 验证后自动调用 `generate_validation_report()`
+- `commands.infer.py` - 推理后生成对比报告
+
+**禁止在命令层直接操作 matplotlib，必须通过 visualization_ops 封装函数**
 
 ## 开发规则
 
@@ -131,8 +155,9 @@ v2/
 │   ├── checkpoint_ops.py     # 检查点管理(万年不变)
 │   ├── ddp_validation.py     # DDP代码验证(无需多卡)
 │   ├── inference_ops.py      # 推理流程封装
-│   ├── training_ops.py       # 训练流程封装
-│   └── validation_ops.py     # 验证流程封装
+│   ├── training_ops.py       # 训练流程封装（含训练循环、epoch训练、检查点保存）
+│   ├── validation_ops.py     # 验证流程封装（含DDP测试、指标计算）
+│   └── visualization_ops.py  # 可视化封装（loss曲线、对比报告）
 ├── models/                   # 模型接口和实现
 │   ├── __init__.py
 │   ├── base.py               # 模型接口基类
@@ -245,6 +270,7 @@ v2/
 | 版本 | 日期 | 说明 |
 |------|------|------|
 | v2.0 | 2026-02-05 | 初始架构设计 |
+| v2.1 | 2026-02-13 | 新增可视化模块 visualization_ops.py，集成 loss 曲线和对比报告生成，重构训练流程封装 |
 
 ---
 
@@ -308,6 +334,7 @@ v2/
 3. 禁止直接使用 `model.module`（用 `get_raw_model()`）
 4. 禁止在 Dataset 外部重复归一化
 5. 禁止在命令层重复实现加载逻辑
+6. 禁止在命令层直接调用 matplotlib（用 `visualization_ops` 封装）
 
 **必须事项**：
 1. 必须使用 `validate_range()` 验证数值范围

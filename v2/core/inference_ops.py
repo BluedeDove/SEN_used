@@ -64,7 +64,7 @@ def run_inference(
 
     # 加载检查点
     if checkpoint_path is not None:
-        from ..core.checkpoint_ops import load_checkpoint_v2, restore_model_v2
+        from core.checkpoint_ops import load_checkpoint_v2, restore_model_v2
         checkpoint = load_checkpoint_v2(checkpoint_path, device=device)
         restore_model_v2(model_interface._model, checkpoint['model_state_dict'])
 

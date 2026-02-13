@@ -51,17 +51,19 @@ class DPMSolverPlusPlus:
         
     def get_time_schedule(self, device):
         """
-        生成时间步调度 (t 从 1 递减到 0，对应 diffusion 的 t 从 0 到 1)
+        生成时间步调度 (t 从 0 递增到 1)
         Flow Matching 中 t=0 是噪声，t=1 是数据
+        
+        ODE: dx/dt = v_theta(x, t)
+        从噪声 x_0 开始，积分到 t=1 得到 x_1 (生成数据)
         """
         if self.skip_type == 'time_uniform':
-            # 均匀时间步
-            timesteps = torch.linspace(1.0, 0.0, self.steps + 1, device=device)
+            # 均匀时间步: 从 0 到 1
+            timesteps = torch.linspace(0.0, 1.0, self.steps + 1, device=device)
         elif self.skip_type == 'time_quadratic':
             # 二次调度，在 t 接近 1 时更密集
             timesteps = torch.linspace(0.0, 1.0, self.steps + 1, device=device)
             timesteps = timesteps ** 2
-            timesteps = 1.0 - timesteps.flip(0)
         else:
             raise ValueError(f"Unknown skip_type: {self.skip_type}")
             
@@ -198,11 +200,12 @@ class DPMSolverPlusPlus:
         else:
             x = self.singlestep_dpm_solver_plus_plus(x, timesteps, sar_features, global_cond)
         
-        # 可选：最后一步去噪 (在 Flow Matching 中通常不需要，因为 t=1 已经是数据)
-        # 但如果 denoise_to_zero 为 True，我们确保最终结果是干净的
-        if self.denoise_to_zero and timesteps[-1] > 0.001:
-            v_final = self.model_wrapper(x, timesteps[-1], sar_features, global_cond)
-            x = x + v_final * (1.0 - timesteps[-1])
+        # denoise_to_zero 在 Flow Matching 中不需要，因为 t=1 已经是干净数据
+        # 移除错误的 denoise_to_zero 逻辑
+        # 原代码: if self.denoise_to_zero and timesteps[-1] > 0.001:
+        #         v_final = ...
+        # 问题是 timesteps[-1] = 1.0 (修复后) 或 0.0 (修复前)
+        # 无论如何，ODE 求解器已经到达终点，不需要额外处理
             
         return x
 

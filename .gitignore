@@ -64,6 +64,7 @@ weights/
 # 实验结果和输出
 # ============================================
 results/
+infer_results/
 outputs/
 experiments/
 runs/

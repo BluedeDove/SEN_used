@@ -114,8 +114,14 @@ class FlowMatchingInterface(BaseModelInterface):
             autocast_context = self._amp_manager.autocast() if self._amp_manager else torch.no_grad()
             
             with autocast_context:
+                # 解包 DDP 获取原始模型（如果适用）
+                if hasattr(self._model, 'module'):
+                    raw_model = self._model.module
+                else:
+                    raw_model = self._model
+                
                 # 采样生成
-                generated = self._model.sample(
+                generated = raw_model.sample(
                     sar,
                     steps=steps,
                     method=method,

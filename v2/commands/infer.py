@@ -22,6 +22,7 @@ from core.inference_ops import run_inference
 from utils.image_ops import save_image_v2
 from core.numeric_ops import composite_to_uint8
 from core.config_loader import load_config
+from core.visualization_ops import create_inference_comparison
 
 
 @command('infer')
@@ -54,8 +55,12 @@ class InferCommand(BaseCommand):
 
         # 创建输出目录
         output_dir = Path(args.output)
+        samples_dir = output_dir / "samples"
+        report_dir = output_dir / "report"
         if is_main_process(rank):
             output_dir.mkdir(parents=True, exist_ok=True)
+            samples_dir.mkdir(parents=True, exist_ok=True)
+            report_dir.mkdir(parents=True, exist_ok=True)
 
         # 运行推理
         inference_outputs = run_inference(
@@ -67,12 +72,35 @@ class InferCommand(BaseCommand):
 
         # 保存结果
         if is_main_process(rank):
+            sample_paths = []
             for i, output in enumerate(tqdm(inference_outputs, desc="Saving")):
-                # 转换并保存
+                # 保存生成的结果
                 img_uint8 = composite_to_uint8(output.generated, input_range=(0.0, 1.0))
-                save_image_v2(img_uint8, str(output_dir / f"result_{i:04d}.png"))
+                save_image_v2(img_uint8, str(samples_dir / f"result_{i:04d}.png"))
 
-            print(f"\nInference completed! Results saved to {output_dir}")
+                # 创建对比图（SAR | Generated | Optical）
+                if output.optical is not None:
+                    comparison = create_inference_comparison(
+                        output.sar, output.generated, output.optical
+                    )
+                    comparison_path = samples_dir / f"comparison_{i:04d}.png"
+                    save_image_v2(comparison, str(comparison_path))
+                    sample_paths.append(comparison_path)
+
+            # 生成汇总报告（前10张）
+            if sample_paths:
+                from core.visualization_ops import create_comparison_figure
+                report_path = report_dir / "inference_report.png"
+                create_comparison_figure(
+                    sample_paths[:10],
+                    report_path,
+                    title=f"Inference Results - {args.checkpoint}",
+                    samples_per_row=5
+                )
+
+            print(f"\nInference completed!")
+            print(f"  Samples: {samples_dir}")
+            print(f"  Report: {report_dir / 'inference_report.png'}")
 
 
 if __name__ == "__main__":

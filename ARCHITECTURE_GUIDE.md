@@ -14,8 +14,9 @@
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  流程层 (core/inference_ops.py, training_ops.py)             │
-│  - 职责: 编排训练/推理流程                                     │
+│  流程层 (core/inference_ops.py, training_ops.py,             │
+│           core/validation_ops.py, core/visualization_ops.py) │
+│  - 职责: 编排训练/推理/验证/可视化流程                         │
 │  - 通过接口调用模型和数据集                                    │
 └─────────────────────────────────────────────────────────────┘
                             ↓
@@ -292,7 +293,71 @@ class MyInferCommand(BaseCommand):
 
 ---
 
-## 7. 文件组织约定
+## 7. 核心模块封装函数参考
+
+### 7.1 training_ops.py - 训练流程封装
+
+```python
+# 初始化训练组件
+setup_training(config, device, rank, world_size) -> TrainingContext
+
+# 单 epoch 训练
+run_training_epoch(ctx, epoch, num_epochs, use_accumulation, accumulation_steps, max_norm) -> float
+
+# 保存检查点
+handle_checkpoint_save(ctx, epoch, metrics, checkpoint_dir, config, save_periodic) -> bool
+
+# 完整训练循环（含异常处理、可视化）
+run_training_loop(ctx, config, start_epoch, checkpoint_dir, result_dir, training_state, log_dir, experiment_dir)
+```
+
+### 7.2 validation_ops.py - 验证与DDP测试封装
+
+```python
+# 运行验证并计算指标
+run_validation(model, val_loader, config, device, save_results, save_dir, max_samples) -> Dict[str, float]
+
+# 保存验证样本（已提取为独立函数）
+save_validation_samples(sar, generated, optical, save_dir, sample_idx, batch_idx)
+
+# DDP 组件测试（已合并原 ddp_validation.py）
+run_all_ddp_validations(verbose=False) -> Tuple[bool, List[str]]
+```
+
+### 7.3 visualization_ops.py - 可视化封装
+
+```python
+# 创建报告目录
+setup_report_directory(experiment_dir) -> Path
+
+# 记录训练日志（实时追加）
+log_loss(log_dir, epoch, loss, val_metrics=None)
+
+# 绘制训练曲线（从日志读取）
+plot_loss_curve(log_file, save_path, title) -> bool
+
+# 创建推理对比图（SAR | Generated | Optical）
+create_inference_comparison(sar, generated, optical) -> np.ndarray
+
+# 生成对比报告（从已保存图片）
+create_comparison_figure(sample_paths, save_path, title, samples_per_row=5) -> bool
+
+# 生成验证报告（整合函数）
+generate_validation_report(result_dir, report_dir, epoch, is_validation=True) -> bool
+```
+
+**可视化输出目录结构**:
+```
+experiments/{name}/
+├── logs/training.log           # 实时记录 epoch, loss, psnr, ssim
+└── report/
+    ├── loss_curve.png          # 训练结束/中断时生成（4子图：loss/psnr/ssim/摘要）
+    └── val_samples_epoch_XXXX.png  # 验证时生成（汇总报告）
+```
+
+---
+
+## 8. 文件组织约定
 
 ```
 v2/
@@ -306,7 +371,8 @@ v2/
 │   ├── checkpoint_ops.py      # 检查点管理(万年不变)
 │   ├── inference_ops.py       # 推理流程封装
 │   ├── training_ops.py        # 训练流程封装
-│   └── validation_ops.py      # 验证流程封装
+│   ├── validation_ops.py      # 验证流程封装
+│   └── visualization_ops.py   # 可视化封装（新增）
 ├── models/                    # 模型接口和实现
 │   ├── __init__.py
 │   ├── base.py                # 模型接口基类
@@ -333,8 +399,9 @@ v2/
 
 ---
 
-## 8. 版本历史
+## 9. 版本历史
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
 | v2.0 | 2026-02-05 | 初始架构设计 |
+| v2.1 | 2026-02-13 | 新增可视化模块（visualization_ops.py），重构训练/验证流程，集成loss曲线和对比报告生成 |

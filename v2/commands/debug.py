@@ -25,7 +25,7 @@ import torch
 from commands.base import BaseCommand, command
 from core.device_ops import setup_device_and_distributed, is_main_process
 from core.numeric_ops import validate_range, composite_to_uint8
-from core.ddp_validation import run_all_validations
+from core.validation_ops import run_all_ddp_validations
 from datasets.registry import create_dataset
 from models.registry import create_model
 
@@ -146,7 +146,7 @@ class DebugCommand(BaseCommand):
         print("-" * 70)
         print("Note: Testing DDP logic with MockDDP (no multi-GPU required)")
 
-        ddp_passed, ddp_messages = run_all_validations(verbose=verbose)
+        ddp_passed, ddp_messages = run_all_ddp_validations(verbose=verbose)
         for msg in ddp_messages:
             status_symbol = "[OK]" if "PASSED" in msg else "[FAIL]"
             print(f"  {status_symbol} {msg}")
